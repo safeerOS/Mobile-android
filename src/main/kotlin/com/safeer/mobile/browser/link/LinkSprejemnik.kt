@@ -121,7 +121,8 @@ class LinkSprejemnik : Service() {
     private fun hubUrl(): String = nastavitve().getString("hub_url", "") ?: ""
     private fun zeton(): String? = nastavitve().getString("control_token", null)
     private fun potVstopnice(): String = nastavitve().getString("hub_ticket_path", "/cast/ticket") ?: "/cast/ticket"
-    private fun ime(): String = "phone-" + Build.MODEL.replace(Regex("\\s+"), "-").lowercase()
+    /** Id telefona iz njegovega kljuca (HubKrmilnik.lastniId). */
+    private fun ime(): String = com.safeer.mobile.browser.cast.HubKrmilnik.lastniId()
     private fun imeNaprave(): String = "Safeer (" + Build.MODEL + ")"
     private fun hubHttp(): String = hubUrl().replace(Regex("^wss"), "https").replace(Regex("^ws"), "http")
         .substringBefore("/cast/ws").substringBefore("/link/ws").substringBefore("/safeer/ws").trimEnd('/')
@@ -171,7 +172,8 @@ class LinkSprejemnik : Service() {
             senderId = ime(),
             sinhronizira = ZaznamkiSync.jeVklopljena(this),
             deviceName = imeNaprave(),
-            zmoznosti = listOf("url", "text", "file", "screen", Daljinec.ZMOZNOST)
+            zmoznosti = listOf("url", "text", "file", "screen", Daljinec.ZMOZNOST, Daljinec.ZMOZNOST_ZVOK, DatotekeStreznik.ZMOZNOST),
+            context = applicationContext
         )
         nov.onShare = { sporocilo -> prejmi(sporocilo) }
         nov.onControl = { sporocilo -> izvediUkaz(nov, sporocilo) }
@@ -289,6 +291,8 @@ class LinkSprejemnik : Service() {
         val posiljatelj = sporocilo.optString("sender", "")
         val dejanje = tovor.optString("action", "")
         val parametri = tovor.optJSONObject("params") ?: tovor
+        // Posiljatelj iz sporocila huba, ne iz parametrov (zeton za datoteke je na napravo).
+        try { parametri.put("_posiljatelj", posiljatelj) } catch (_: Throwable) { }
         val refId = sporocilo.optString("id", "")
         glavnaNit.post {
             val ospredje = naUkaz

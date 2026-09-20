@@ -175,6 +175,12 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         if (intent != null) {
             when (intent.action) {
                 Intent.ACTION_VIEW -> {
+                    // Prijava racunalnika s QR kodo (kamera odpre safeer.si/p#...): to ni stran za brskanje,
+                    // ampak vprasanje »Dovoli?« - tudi kadar je Safeer privzeti brskalnik.
+                    if (com.safeer.mobile.browser.link.QrPrijavaActivity.jeSafeerKoda(intent.data)) {
+                        startActivity(Intent(this, com.safeer.mobile.browser.link.QrPrijavaActivity::class.java).setData(intent.data))
+                        return
+                    }
                     targetUrl = intent.dataString
                 }
                 Intent.ACTION_WEB_SEARCH -> {
@@ -284,6 +290,8 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // Stran Linka je vprasala za dovoljenje za medije; naj se izrise s pravim stanjem.
+        linkMost?.naDovoljenje(requestCode)
         when (requestCode) {
             REQ_CODE_PERMISSIONS -> {
                 val req = pendingPermissionRequest
@@ -1221,7 +1229,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         var okno: AlertDialog? = null
         com.safeer.mobile.browser.cast.HubPairing.pair(
             this, castHubUrl(),
-            "phone-" + android.os.Build.MODEL.replace(Regex("\\s+"), "-").lowercase(),
+            com.safeer.mobile.browser.cast.HubKrmilnik.lastniId(),
             "Safeer (" + android.os.Build.MODEL + ")",
             { nacin, koda ->
                 okno?.dismiss()
@@ -1238,7 +1246,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                         .setPositiveButton(I18n.t(this, "pair_connect")) { _, _ ->
                             com.safeer.mobile.browser.cast.HubPairing.potrdiKodo(
                                 this, vnos.text.toString(),
-                                "phone-" + android.os.Build.MODEL.replace(Regex("\\s+"), "-").lowercase()
+                                com.safeer.mobile.browser.cast.HubKrmilnik.lastniId()
                             ) { uspelo, _ ->
                                 if (!uspelo) {
                                     Toast.makeText(this, I18n.t(this, "pair_wrong_code"), Toast.LENGTH_LONG).show()
