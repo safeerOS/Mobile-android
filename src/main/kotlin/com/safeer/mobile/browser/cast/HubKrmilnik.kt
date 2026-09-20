@@ -28,6 +28,10 @@ object HubKrmilnik {
     @Volatile
     private var streznik: HubStreznik? = null
 
+    /** Spletni odjemalec (naprava brez Safeerja): goli HTTP na svojih vratih, samo domace omrezje. */
+    @Volatile
+    private var spletniStreznik: HubStreznik? = null
+
     @Volatile
     var usmerjevalnik: HubUsmerjevalnik? = null
         private set
@@ -54,6 +58,9 @@ object HubKrmilnik {
     fun tece(): Boolean = streznik?.teceZdaj() == true
 
     fun vrata(): Int = streznik?.vrata ?: 0
+
+    /** Vrata spletnega odjemalca (0, ce ne tece). */
+    fun vrataSplet(): Int = spletniStreznik?.vrata ?: 0
 
     /** Ali je uporabnik Hub prizgal (tudi ce trenutno ne tece, npr. pred zagonom brskalnika). */
     fun jeZazelen(context: Context): Boolean =
@@ -91,6 +98,10 @@ object HubKrmilnik {
             return false
         }
         u.lastniOdtis = HubTls.lastniOdtis()
+        // Hub je prvi clan kroga zaupanja: njegov kljuc je kljuc potrdila TLS.
+        try { u.vpisiLastniKljuc(lastniId(), imeHuba(), HubTls.javniKljucB64(), "phone") } catch (e: Throwable) {
+            Log.w(TAG, "Kljuca huba ni bilo mogoce vpisati v krog: ${e.message}")
+        }
         u.naSpremembePrijav = {
             try { naSpremembePrijav?.invoke() } catch (_: Throwable) { }
             try { naPrijavoZaZaslon?.invoke() } catch (_: Throwable) { }
@@ -121,7 +132,21 @@ object HubKrmilnik {
         usmerjevalnik = u
         tokovi = t
 
-        HubObjava.objavi(app, s.vrata, imeHuba()) { uspelo ->
+        // Spletni odjemalec: ista logika huba, goli HTTP na svojih vratih (brskalnik na telefonu brez
+        // Safeerja ne sprejme nasega samopodpisanega potrdila); samo krajevno omrezje in ozek izbor poti.
+        u.beriSredstvo = { ime ->
+            try { app.assets.open("link-web/$ime").bufferedReader(Charsets.UTF_8).use { it.readText() } } catch (_: Throwable) { null }
+        }
+        val w = HubStreznik(
+            zeljenaVrata = HubUsmerjevalnik.SPLETNA_VRATA,
+            naZahtevo = { zahteva -> u.odgovoriSplet(zahteva) },
+            preveriVstopnico = { zahteva -> u.preveriVstopnico(zahteva) },
+            naPovezavo = { povezava -> povezi(u, povezava) },
+            tlsTovarna = null
+        )
+        if (w.zazeni()) { spletniStreznik = w; u.spletnaVrata = w.vrata } else Log.w(TAG, "Spletnih vrat ni bilo mogoce odpreti; spletni odjemalec ni na voljo.")
+
+        HubObjava.objavi(app, s.vrata, imeHuba(), IzvolitevHuba.privzetaPrioriteta("phone"), lastniId()) { uspelo ->
             if (!uspelo) {
                 // Brez oglasa Hub se vedno dela; naprava, ki ga je ze videla, pozna naslov.
                 Log.i(TAG, "Hub tece, oglas v omrezju pa ni uspel.")
@@ -199,6 +224,8 @@ object HubKrmilnik {
         HubObjava.umakni()
         streznik?.ustavi()
         streznik = null
+        spletniStreznik?.ustavi()
+        spletniStreznik = null
         usmerjevalnik = null
         tokovi = null
         if (zapomni && context != null) zapomniZeljo(context.applicationContext, false)
@@ -206,8 +233,15 @@ object HubKrmilnik {
         Log.i(TAG, "Safeer Hub ustavljen.")
     }
 
-    /** Isti id, s katerim se ta telefon prijavlja Hubu (LinkMost.ime()). */
-    fun lastniId(): String = "phone-" + android.os.Build.MODEL.replace(Regex("\\s+"), "-").lowercase()
+    /**
+     * Id te naprave: iz njenega kljuca (`n-…`, KrogNaprave.lastniId) - isti na vseh hubih. Isti id uporabi
+     * telefon kot posiljatelj (LinkMost/LinkSprejemnik) in kot hub (krog, oglas mDNS). Stari `phone-<model>`
+     * ostane v krogih kot alias; hub ga ob prvi prijavi s podpisom sam poveze z novim.
+     */
+    fun lastniId(): String = KrogNaprave.lastniId(nadomestni = { stariId() })
+
+    /** Id po modelu naprave, kot je veljal pred prehodom na id iz kljuca (nadomestek in alias). */
+    fun stariId(): String = "phone-" + android.os.Build.MODEL.replace(Regex("\\s+"), "-").lowercase()
 
     /**
      * Mapa za datoteke, ki jih telefon prejme prek Safeer Linka: ista, kot jo je uporabnik
@@ -225,6 +259,7 @@ object HubKrmilnik {
     private fun povezi(u: HubUsmerjevalnik, povezava: HubStreznik.Povezava) {
         val odjemalec = object : HubUsmerjevalnik.Odjemalec {
             override val naslov: String = povezava.naslov
+            override val vstopnica: String? = povezava.zahteva.poizvedba["ticket"]
             override fun poslji(besedilo: String) = povezava.poslji(besedilo)
             override fun zapri(koda: Int, razlog: String) = povezava.zapri(koda, razlog)
         }

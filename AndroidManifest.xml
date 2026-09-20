@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.safeer.mobile.browser"
-    android:versionCode="30"
-    android:versionName="1.0.29">
+    android:versionCode="31"
+    android:versionName="1.0.30">
 
     <uses-sdk
         android:minSdkVersion="28"
         android:targetSdkVersion="36" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Safeer Link: videi, glasba in slike tega telefona za druge naprave - samo ko uporabnik to
+         vklopi na strani Linka in dovoli dostop. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <!-- Safeer Link: stran ali ukaz z druge naprave odpre brskalnik, tudi ko ni v ospredju
          (Android 10+ zagon iz ozadja dovoli le prek obvestila s celozaslonsko namero). -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
@@ -119,6 +125,29 @@
         </activity>
 
         <!-- 🎵 Predvajanje v ozadju (YouTube, YouTube Music, radio): obvestilo s premorom, proces ostane živ -->
+        <!-- Safeer Link: prijava racunalnika s QR kodo. Kamera odpre kodo iz prijavnega okna Safeer OS /
+             Safeer Control; telefon (ze v Safeer Linku) po uporabnikovem »Dovoli« prijavo potrdi. -->
+        <activity
+            android:name="com.safeer.mobile.browser.link.QrPrijavaActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="safeer" android:host="link" android:path="/qr" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="safeer.si" android:path="/p" />
+                <data android:scheme="https" android:host="safeer.si" android:path="/p/" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name="com.safeer.mobile.browser.MediaPlaybackService"
             android:exported="false"
