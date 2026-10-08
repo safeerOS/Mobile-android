@@ -187,7 +187,7 @@ object UserScriptManager {
             // Prazen "vabni" element (adsbox, ad-banner ...): strani z njim preverjajo blokator, zato ostane v DOM (skrit s CSS).
             function isEmptyBait(el) {
                 try {
-                    return el.children.length === 0 && (el.textContent || '').trim().length <= 2;
+                    return el.children.length === 0 && (el.textContent || '').trim().length <= 2 && /adsbox|textads|text_ad|banner_ad|bannerad|ad-banner|pub_300x250/i.test(String(el.className || '') + ' ' + String(el.id || ''));
                 } catch(e) { return false; }
             }
 
