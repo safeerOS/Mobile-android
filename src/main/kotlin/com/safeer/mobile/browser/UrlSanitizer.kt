@@ -90,6 +90,16 @@ object UrlSanitizer {
             if (queryString.isEmpty()) return "$base$fragment"
 
             val pairs = queryString.split('&')
+            // Prijavne in podpisane povezave so nedeljive, ne nabor polj, ki jih lahko brisemo.
+            val keys = pairs.map { decodeKey(it.substringBefore('=')) }
+            val protectedKeys = setOf("state", "nonce", "code", "token", "secret", "signature", "sig",
+                "session", "session_id", "session_token", "ticket", "client_id", "redirect_uri", "redirect_url",
+                "return_url", "returnto", "code_challenge", "samlrequest", "samlresponse", "relaystate",
+                "access_token", "id_token")
+            val pathParts = java.net.URI(base).path.orEmpty().lowercase().split('/')
+            if (keys.any { it in protectedKeys || it.startsWith("oauth_") || it.startsWith("x-amz-") || it.startsWith("x-goog-") } ||
+                pathParts.any { it in setOf("auth", "oauth", "oauth2", "authorize", "callback", "login", "signin", "sign-in", "verify", "reset-password") }) return url
+
             val retainedPairs = mutableListOf<String>()
             var anyStripped = false
 
