@@ -184,6 +184,13 @@ object UserScriptManager {
                 return false;
             }
 
+            // Prazen "vabni" element (adsbox, ad-banner ...): strani z njim preverjajo blokator, zato ostane v DOM (skrit s CSS).
+            function isEmptyBait(el) {
+                try {
+                    return el.children.length === 0 && (el.textContent || '').trim().length <= 2;
+                } catch(e) { return false; }
+            }
+
             // 🚫 2. Samodejno odstranjevanje lažnih opozoril, vsiljenih modalov in bannerjev (brez vpliva na predvajalnik)
             function cleanAllAdOverlays() {
                 try {
@@ -203,7 +210,7 @@ object UserScriptManager {
                     var adElements = document.querySelectorAll(adSelectors);
                     for (var i = 0; i < adElements.length; i++) {
                         var el = adElements[i];
-                        if (!isPlayerElement(el)) {
+                        if (!isPlayerElement(el) && !isEmptyBait(el)) {
                             try { el.remove(); } catch(e) {}
                         }
                     }
@@ -1728,6 +1735,18 @@ object UserScriptManager {
         return host.isNotEmpty() && ThreatBlockEngine.isRealBankHost(host)
     }
 
+    @Volatile private var cachedProtiAdblockJs: String? = null
+
+    /** Splosna zascita pred zaznavanjem blokatorja (assets/protiadblock.js); enaka za vse strani. */
+    fun protiAdblockJs(context: android.content.Context): String {
+        cachedProtiAdblockJs?.let { return it }
+        val js = try {
+            context.assets.open("protiadblock.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } catch (_: Exception) { "" }
+        cachedProtiAdblockJs = js
+        return js
+    }
+
     fun injectEarlyScript(webView: WebView, isDesktop: Boolean = false) {
         val currentUrl = try { webView.url } catch (_: Exception) { null }
         if (isLocalAsset(currentUrl)) return
@@ -1761,6 +1780,10 @@ object UserScriptManager {
         if (!skipAdguardScripts && PreferencesManager.isAdguardProtectionEnabled(webView.context)) {
             webView.evaluateJavascript(ADGUARD_PROTECTION_JS, null)
         }
+        if (!skipAdguardScripts && !isYouTubeDomain(currentUrl)) {
+            val pa = protiAdblockJs(webView.context)
+            if (pa.isNotEmpty()) webView.evaluateJavascript(pa, null)
+        }
     }
 
     fun injectOnPageFinished(webView: WebView, isDarkMode: Boolean, isDesktop: Boolean = false) {
@@ -1793,6 +1816,10 @@ object UserScriptManager {
         if (!isAdguardDomain(currentUrl)) webView.evaluateJavascript(HOOKSHOT_INSERTS_JS, null)
         if (!skipAdguardScripts && PreferencesManager.isAdguardProtectionEnabled(webView.context)) {
             webView.evaluateJavascript(ADGUARD_PROTECTION_JS, null)
+        }
+        if (!skipAdguardScripts && !isYouTubeDomain(currentUrl)) {
+            val pa = protiAdblockJs(webView.context)
+            if (pa.isNotEmpty()) webView.evaluateJavascript(pa, null)
         }
 
         injectDarkModeToggle(webView, isDarkMode)
