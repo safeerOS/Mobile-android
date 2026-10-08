@@ -11,7 +11,7 @@
 (function () {
     'use strict';
     try { var gost = String(location.hostname || '').toLowerCase();
-          if (gost === 'youtube.com' || gost.slice(-12) === '.youtube.com' || gost.slice(-19) === '.youtube-nocookie.com') return; } catch (_) {}
+          if (gost.indexOf('youtube') !== -1) return; } catch (_) {}
     if (window.__safeerProtiAdblock) return;
     try { Object.defineProperty(window, '__safeerProtiAdblock', { value: true }); } catch (_) { return; }
 
