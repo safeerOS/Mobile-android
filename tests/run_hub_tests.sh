@@ -19,11 +19,11 @@ trap 'rm -rf "$OUT"' EXIT
     -include-runtime -d "$OUT/hub.jar"
 java -cp "$OUT/hub.jar" com.safeer.mobile.browser.cast.HubStreznikTestKt
 
-"$KOTLINC" -J-Xmx2g "$TEST_DIR/stubs/Log.kt" "$SRC/HubStreznik.kt" "$SRC/JsonLahki.kt" "$SRC/HubTokovi.kt" "$SRC/Spake2.kt" "$SRC/HubUsmerjevalnik.kt" \
+"$KOTLINC" -J-Xmx2g "$TEST_DIR/stubs/Log.kt" "$SRC/HubStreznik.kt" "$SRC/JsonLahki.kt" "$SRC/HubTokovi.kt" "$SRC/Spake2.kt" "$SRC/KrogZaupanja.kt" "$SRC/HubUsmerjevalnik.kt" \
     "$TEST_DIR/UsmerjevalnikTest.kt" -include-runtime -d "$OUT/usmerjevalnik.jar"
 java -cp "$OUT/usmerjevalnik.jar" com.safeer.mobile.browser.cast.UsmerjevalnikTestKt
 
-"$KOTLINC" -J-Xmx2g "$TEST_DIR/stubs/Log.kt" "$SRC/HubStreznik.kt" "$SRC/JsonLahki.kt" "$SRC/HubTokovi.kt" "$SRC/Spake2.kt" "$SRC/HubUsmerjevalnik.kt" \
+"$KOTLINC" -J-Xmx2g "$TEST_DIR/stubs/Log.kt" "$SRC/HubStreznik.kt" "$SRC/JsonLahki.kt" "$SRC/HubTokovi.kt" "$SRC/Spake2.kt" "$SRC/KrogZaupanja.kt" "$SRC/HubUsmerjevalnik.kt" \
     "$TEST_DIR/TokoviTest.kt" -include-runtime -d "$OUT/tokovi.jar"
 java -cp "$OUT/tokovi.jar" com.safeer.mobile.browser.cast.TokoviTestKt
 
