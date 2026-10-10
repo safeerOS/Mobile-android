@@ -23,7 +23,6 @@ echo "=========================================================="
 
 echo "📥 Prenašam najnovejšo različico Safeer Browser APK in kontrolne vsote..."
 curl -L -s -o "$TEMP_APK" "$APK_URL"
-curl -L -s -o "$TEMP_SHA" "$SHA_URL"
 
 if [ ! -s "$TEMP_APK" ]; then
     echo "❌ Napaka pri prenosu APK paketa."
@@ -32,21 +31,27 @@ fi
 
 echo "✅ APK uspešno prenesen ($(du -h "$TEMP_APK" | cut -f1))"
 
-# Preverjanje celovitosti s SHA-256
-if [ -s "$TEMP_SHA" ]; then
-    EXPECTED_SHA=$(grep "Safeer-Browser.apk" "$TEMP_SHA" | head -n 1 | awk '{print $1}')
-    if [ -n "$EXPECTED_SHA" ]; then
-        ACTUAL_SHA=$(sha256sum "$TEMP_APK" | awk '{print $1}')
-        if [ "$EXPECTED_SHA" = "$ACTUAL_SHA" ]; then
-            echo "🔒 SHA-256 celovitost potrjena ($ACTUAL_SHA)"
-        else
-            echo "❌ NAPAKA: SHA-256 kontrolna vsota se NE ujema!"
-            echo "   Pričakovano: $EXPECTED_SHA"
-            echo "   Dobljeno:    $ACTUAL_SHA"
-            echo "🚨 Prekinjam namestitev zaradi varnosti."
-            exit 1
-        fi
+# Celovitost: SHA256SUMS izdaje navaja vsoto pod imenom datoteke v izdaji (npr. safeer-browser-android-1.0.36.apk).
+APK_IME="${APK_URL##*/}"
+if [ -n "$SHA_URL" ]; then
+    curl -fLs -o "$TEMP_SHA" "$SHA_URL"
+    EXPECTED_SHA="$(awk -v ime="$APK_IME" '$2 == ime || $2 == "*" ime { print $1; exit }' "$TEMP_SHA")"
+    if [ -z "$EXPECTED_SHA" ]; then
+        echo "❌ SHA256SUMS izdaje nima vrstice za $APK_IME. Prekinjam namestitev."
+        exit 1
     fi
+    ACTUAL_SHA=$(sha256sum "$TEMP_APK" | awk '{print $1}')
+    if [ "$EXPECTED_SHA" = "$ACTUAL_SHA" ]; then
+        echo "🔒 SHA-256 celovitost potrjena ($ACTUAL_SHA)"
+    else
+        echo "❌ NAPAKA: SHA-256 kontrolna vsota se NE ujema!"
+        echo "   Pričakovano: $EXPECTED_SHA"
+        echo "   Dobljeno:    $ACTUAL_SHA"
+        echo "🚨 Prekinjam namestitev zaradi varnosti."
+        exit 1
+    fi
+else
+    echo "⚠️ Izdaja nima datoteke SHA256SUMS; celovitosti APK ni mogoče preveriti."
 fi
 
 # Preveri prisotnost ADB

@@ -50,6 +50,11 @@ jobs:
           KOTLINC: /tmp/kotlinc/bin/kotlinc
         run: ANDROID_JAR="$ANDROID_HOME/platforms/android-36/android.jar" bash tests/run_tests.sh
 
+      - name: Safeer Hub (streznik, usmerjevalnik, tokovi, SPAKE2)
+        env:
+          KOTLINC: /tmp/kotlinc/bin/kotlinc
+        run: bash tests/run_hub_tests.sh
+
       - name: Nepodpisan APK (brez kljuca)
         env:
           KOTLINC: /tmp/kotlinc/bin/kotlinc
