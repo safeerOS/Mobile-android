@@ -6,6 +6,7 @@ blocking, and background playback — all decided on the device.
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android_9%2B-3ddc84?style=flat-square)](#requirements)
 [![Downloads](https://img.shields.io/badge/Download-Releases-00e5ff?style=flat-square)](../../releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/safeerOS/Mobile-android?style=flat-square&label=release)](../../releases/latest)
 
 Slovenian: [README.sl.md](README.sl.md) · Website: [safeer.si](https://safeer.si)
 
@@ -13,6 +14,20 @@ Slovenian: [README.sl.md](README.sl.md) · Website: [safeer.si](https://safeer.s
 > threats. It cannot protect against every new or unknown attack.
 
 ---
+
+## Current version
+
+| | |
+|---|---|
+| **Safeer Browser for Android** (this repository) | **1.0.36** — tag [`v1.0.36`](https://github.com/safeerOS/Mobile-android/releases/tag/v1.0.36) on `main` |
+| What changed | [CHANGELOG.md](CHANGELOG.md) · every version: [docs/releases/](docs/releases/) |
+| Download | [safeer.si](https://safeer.si/#prenosi) · [GitHub Releases](../../releases/latest) |
+
+The rest of the Safeer family for Android — **Safeer OS 0.5.93** for phones, tablets and
+televisions, the **Android TV browser 2.1.215** and **Safeer Player 0.2.77** — is built from
+[safeerOS/Android-tv](https://github.com/safeerOS/Android-tv). Linux and Windows editions:
+[safeerOS/Safeer-linux](https://github.com/safeerOS/Safeer-linux) ·
+[safeerOS/Safeer-windows](https://github.com/safeerOS/Safeer-windows).
 
 ## What it does
 

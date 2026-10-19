@@ -7,6 +7,7 @@ ozadju — vse odločitve padejo na napravi.
 [![Licenca](https://img.shields.io/badge/Licenca-Apache_2.0-blue?style=flat-square)](LICENSE)
 [![Platforma](https://img.shields.io/badge/Platforma-Android_9%2B-3ddc84?style=flat-square)](#zahteve)
 [![Prenos](https://img.shields.io/badge/Prenos-Izdaje-00e5ff?style=flat-square)](../../releases/latest)
+[![Zadnja izdaja](https://img.shields.io/github/v/release/safeerOS/Mobile-android?style=flat-square&label=izdaja)](../../releases/latest)
 
 English: [README.md](README.md) · Spletna stran: [safeer.si](https://safeer.si)
 
@@ -14,6 +15,20 @@ English: [README.md](README.md) · Spletna stran: [safeer.si](https://safeer.si)
 > Pred vsakim novim ali neznanim napadom te ne more zaščititi.
 
 ---
+
+## Trenutna različica
+
+| | |
+|---|---|
+| **Safeer Browser za Android** (ta repozitorij) | **1.0.36** — oznaka [`v1.0.36`](https://github.com/safeerOS/Mobile-android/releases/tag/v1.0.36) na veji `main` |
+| Kaj je novega | [CHANGELOG.md](CHANGELOG.md) · vse različice: [docs/releases/](docs/releases/) |
+| Prenos | [safeer.si](https://safeer.si/#prenosi) · [GitHub Releases](../../releases/latest) |
+
+Ostali Safeer za Android — **Safeer OS 0.5.93** za telefone, tablice in televizorje,
+**brskalnik za Android TV 2.1.215** in **Safeer Predvajalnik 0.2.77** — se gradi iz
+[safeerOS/Android-tv](https://github.com/safeerOS/Android-tv). Različici za Linux in Windows:
+[safeerOS/Safeer-linux](https://github.com/safeerOS/Safeer-linux) ·
+[safeerOS/Safeer-windows](https://github.com/safeerOS/Safeer-windows).
 
 ## Kaj zna
 
