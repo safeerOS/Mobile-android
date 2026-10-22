@@ -49,7 +49,7 @@
     <string name="ssl_warning_title">Security warning (SSL)</string>
     <string name="ssl_warning_msg">A secure connection to %1$s is not possible because the security certificate is invalid or has expired.\n\nAccess was stopped to protect your data.</string>
     <string name="ssl_compromised_ca_title">Security Warning: Compromised CA (eMudhra)</string>
-    <string name="ssl_compromised_ca_msg">A secure connection to %1$s is not possible because the site presents a security certificate issued by a compromised intermediate Certificate Authority (%2$s).\n\nPrivate keys for this CA were publicly compromised, allowing attackers to forge certificates for any website.\n\nAccess has been stopped to protect your data. Proceeding is not permitted.</string>
+    <string name="ssl_compromised_ca_msg">This site\'s certificate was issued by a certificate authority that has been revoked because of compromised keys. We therefore do not open the site.</string>
     <string name="ssl_this_site">This website</string>
     <string name="toast_prev_tab">◀ Previous tab</string>
     <string name="toast_next_tab">Next tab ▶</string>

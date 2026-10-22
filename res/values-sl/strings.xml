@@ -48,7 +48,7 @@
     <string name="ssl_warning_title">Varnostno opozorilo (SSL)</string>
     <string name="ssl_warning_msg">Varna povezava z %1$s ni mogoča, ker je varnostni certifikat neveljaven ali potekel.\n\nDostop je bil zaradi zaščite vaših podatkov prekinjen.</string>
     <string name="ssl_compromised_ca_title">Varnostno opozorilo: kompromitiran overitelj (eMudhra)</string>
-    <string name="ssl_compromised_ca_msg">Varna povezava z %1$s ni mogoča, ker spletno mesto uporablja varnostno potrdilo, ki ga je izdal kompromitiran vmesni overitelj (%2$s).\n\nZasebni ključi tega overitelja so bili javno kompromitirani, zato lahko kdorkoli ustvari ponarejeno potrdilo za katerokoli spletno mesto.\n\nDostop je bil zaradi zaščite vaših podatkov prekinjen. Nadaljevanje ni dovoljeno.</string>
+    <string name="ssl_compromised_ca_msg">Potrdilo te strani je izdal overitelj, ki je bil preklican zaradi kompromitiranih ključev. Strani zato ne odpremo.</string>
     <string name="ssl_this_site">To spletno mesto</string>
     <string name="toast_prev_tab">◀ Prejšnji zavihek</string>
     <string name="toast_next_tab">Naslednji zavihek ▶</string>

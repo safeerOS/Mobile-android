@@ -51,6 +51,7 @@ class ChromiumEngineView @JvmOverloads constructor(
         }
 
     private var failedNavigationUrl: String? = null
+    private val emudhraZastavica = EmudhraRevocations.ZastavicaOpozorila()
 
     override fun reload() {
         val failed = failedNavigationUrl
@@ -165,7 +166,8 @@ class ChromiumEngineView @JvmOverloads constructor(
             useWideViewPort = true
             loadWithOverviewMode = true
             
-            cacheMode = WebSettings.LOAD_DEFAULT
+            // Po blokadi gostitelja eMudhra do ponovnega zagona brez predpomnilnika
+            cacheMode = if (EmudhraRevocations.imaBlokiraneGostitelje()) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
             val ua = if (isDesktopMode) DESKTOP_USER_AGENT else defaultMobileUserAgent
             currentUserAgent = ua
             userAgentString = ua
@@ -598,6 +600,11 @@ class ChromiumEngineView @JvmOverloads constructor(
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val uri = request?.url ?: return false
                 val urlStr = uri.toString()
+                if (urlStr.equals(EmudhraRevocations.NAZAJ_NA_VARNO_URL, ignoreCase = true)) {
+                    // Gumb na opozorilni strani; veljaven le z nje
+                    if (view != null && EmudhraRevocations.jeOpozorilnaStran(view.url)) EmudhraRevocations.nazajNaVarno(view)
+                    return true
+                }
                 val isMainFrame = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     request.isForMainFrame
                 } else {
@@ -765,7 +772,8 @@ class ChromiumEngineView @JvmOverloads constructor(
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context)) {
+                if (!EmudhraRevocations.jeOpozorilnaStran(url)) emudhraZastavica.novaNavigacija()
+                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context, emudhraZastavica)) {
                     onSecurityChanged?.invoke(false)
                     return
                 }
@@ -785,7 +793,7 @@ class ChromiumEngineView @JvmOverloads constructor(
 
             override fun onPageCommitVisible(view: WebView?, url: String?) {
                 super.onPageCommitVisible(view, url)
-                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context)) {
+                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context, emudhraZastavica)) {
                     onSecurityChanged?.invoke(false)
                     return
                 }
@@ -793,7 +801,7 @@ class ChromiumEngineView @JvmOverloads constructor(
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context)) {
+                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context, emudhraZastavica)) {
                     onSecurityChanged?.invoke(false)
                     return
                 }
@@ -825,7 +833,7 @@ class ChromiumEngineView @JvmOverloads constructor(
 
             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                 super.doUpdateVisitedHistory(view, url, isReload)
-                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context)) {
+                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context, emudhraZastavica)) {
                     onSecurityChanged?.invoke(false)
                     return
                 }

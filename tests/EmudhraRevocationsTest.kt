@@ -12,6 +12,8 @@ fun main() {
     testPrepoznavaRealnihPotrdil()
     testPreverjanjeVerigeInTrustManager()
     testPreverjanjeIzdajateljaInDName()
+    testZastavicaOpozorila()
+    testNazajNaVarno()
     println("PASS: eMudhra revocations: 16 certs verified, SHA-256/SPKI match, chain rejection, clean certs pass")
 }
 
@@ -259,4 +261,32 @@ private fun testPreverjanjeIzdajateljaInDName() {
         check(!EmudhraRevocations.jeKompromitiranIzdajatelj(p)) { "Čist izdajatelj ne sme biti kompromitiran: $iss" }
         check(!EmudhraRevocations.jeKompromitiranIzdajatelj(null, iss)) { "Čist DName ne sme biti kompromitiran: $iss" }
     }
+}
+
+fun testZastavicaOpozorila() {
+    val z = EmudhraRevocations.ZastavicaOpozorila()
+    z.novaNavigacija()
+    check(z.prviZaNavigacijo("https://a.example/")) { "Prvi klic za navigacijo mora pokazati opozorilo" }
+    // onPageCommitVisible, onPageFinished, doUpdateVisitedHistory za isto navigacijo
+    repeat(3) { check(!z.prviZaNavigacijo("https://a.example/")) { "Isto navigacijo je treba obravnavati le enkrat" } }
+    // ponovno nalaganje istega URL je nova navigacija
+    z.novaNavigacija()
+    check(z.prviZaNavigacijo("https://a.example/")) { "Nova navigacija mora znova pokazati opozorilo" }
+    // drugi URL v isti navigaciji (preusmeritev)
+    check(z.prviZaNavigacijo("https://b.example/"))
+}
+
+fun testNazajNaVarno() {
+    EmudhraRevocations.blokirajGostitelja("Slaba.example")
+    check(EmudhraRevocations.imaBlokiraneGostitelje())
+    val urlji = listOf(
+        "file:///android_asset/brave_home.html",
+        "https://dobra.example/",
+        "https://slaba.example/a",
+        "https://slaba.example/b",
+        "safeer://compromised-ca"
+    )
+    check(EmudhraRevocations.zamikNazajNaVarno(urlji, 4) == -3) { "Preskoči blokirane vnose in opozorilno stran" }
+    check(EmudhraRevocations.zamikNazajNaVarno(urlji.drop(2), 2) == null) { "Brez varnega vnosa -> domača stran" }
+    check(EmudhraRevocations.zamikNazajNaVarno(urlji, 0) == null)
 }

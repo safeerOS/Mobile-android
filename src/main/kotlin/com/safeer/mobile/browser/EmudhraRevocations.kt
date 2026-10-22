@@ -34,7 +34,8 @@ import okhttp3.OkHttpClient
  *
  * Ta razred zagotavlja:
  * 1. Popoln seznam vseh 16 kompromitiranih potrdil (Subject DN, SHA-256 certifikatov in SPKI).
- * 2. Preverjanje v WebView (ob prejemu certifikata ustavitev nalaganja in prikaz opozorila brez obvoza).
+ * 2. Preverjanje v WebView: preverba teče po prejemu strani (WebView certifikat pokaže šele, ko je odgovor
+ *    že prispel), zato je to le delna zaščita; nato ustavitev nalaganja in opozorilo brez obvoza.
  * 3. Lasten varnostni TrustManager ovoj za HttpsURLConnection in OkHttp klice aplikacije.
  */
 object EmudhraRevocations {
@@ -371,20 +372,98 @@ object EmudhraRevocations {
         return jeKompromitiranIzdajatelj(issuedBy.cName, issuedBy.dName)
     }
 
+    /** Naslov vgrajene strani, ki jo vrne gumb »Nazaj na varno«. */
+    const val DOMACA_STRAN = "file:///android_asset/brave_home.html"
+
+    /** URL, ki ga sproži gumb »Nazaj na varno« na opozorilni strani. */
+    const val NAZAJ_NA_VARNO_URL = "safeer://nazaj-na-varno"
+
+    private const val OPOZORILNA_STRAN_URL = "safeer://compromised-ca"
+
+    private val blokiraniGostitelji: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
+
+    /** Ali je bil v tem zagonu že blokiran kakšen gostitelj (potem predpomnilnik ne sme več streči strani). */
+    fun imaBlokiraneGostitelje(): Boolean = blokiraniGostitelji.isNotEmpty()
+
+    fun blokirajGostitelja(host: String) {
+        blokiraniGostitelji.add(host.lowercase(Locale.ROOT))
+    }
+
+    fun jeBlokiranGostitelj(host: String?): Boolean =
+        !host.isNullOrEmpty() && blokiraniGostitelji.contains(host.lowercase(Locale.ROOT))
+
+    fun jeOpozorilnaStran(url: String?): Boolean =
+        url?.startsWith(OPOZORILNA_STRAN_URL, ignoreCase = true) == true
+
+    private fun gostiteljIz(url: String?): String? = try {
+        java.net.URI(url ?: "").host?.lowercase(Locale.ROOT)
+    } catch (_: Throwable) {
+        null
+    }
+
     /**
-     * Preveri certifikat v WebView. Če je kompromitiran:
+     * Zastavica ene navigacije v enem zavihku: opozorilo se za isto navigacijo (isti URL in števec)
+     * pokaže in naloži le enkrat, čeprav ga sprožijo različni povratni klici WebViewClient.
+     */
+    class ZastavicaOpozorila {
+        private var stevecNavigacije = 0
+        private var zadnjiKljuc: String? = null
+
+        @Synchronized
+        fun novaNavigacija() {
+            stevecNavigacije++
+        }
+
+        /** Vrne true samo ob prvem klicu za isto navigacijo in isti URL. */
+        @Synchronized
+        fun prviZaNavigacijo(url: String): Boolean {
+            val kljuc = "$stevecNavigacije|$url"
+            if (kljuc == zadnjiKljuc) return false
+            zadnjiKljuc = kljuc
+            return true
+        }
+    }
+
+    /**
+     * Izbere vnos zgodovine za gumb »Nazaj na varno«: najbližji prejšnji vnos, ki ni opozorilna stran
+     * in ne pripada blokiranemu gostitelju. Vrne zamik za goBackOrForward ali null (potem domača stran).
+     */
+    fun zamikNazajNaVarno(urlji: List<String>, trenutni: Int): Int? {
+        var i = minOf(trenutni, urlji.size) - 1
+        while (i >= 0) {
+            val u = urlji[i]
+            if (!jeOpozorilnaStran(u) && !jeBlokiranGostitelj(gostiteljIz(u))) return i - trenutni
+            i--
+        }
+        return null
+    }
+
+    /** Gumb »Nazaj na varno«: nazaj mimo blokiranih gostiteljev, če jih ni, domača stran. */
+    fun nazajNaVarno(view: WebView) {
+        val seznam = view.copyBackForwardList()
+        val urlji = (0 until seznam.size).map { seznam.getItemAtIndex(it).url ?: "" }
+        val zamik = zamikNazajNaVarno(urlji, seznam.currentIndex)
+        if (zamik != null) view.goBackOrForward(zamik) else view.loadUrl(DOMACA_STRAN)
+    }
+
+    /**
+     * Preveri certifikat v WebView (po prejemu strani, torej delna zaščita). Če je kompromitiran:
      * - ustavi nalaganje ([WebView.stopLoading]),
      * - zamenja vsebino z varnostnim opozorilom v jeziku uporabnika (brez možnosti nadaljevanja),
      * - prikaže sistemsko opozorilno okno,
      * - vrne true (kar pomeni, da je bilo nalaganje blokirano).
+     * Opozorilo in naložitev opozorilne strani se za isto navigacijo zgodita le enkrat ([zastavica]).
      */
-    fun obravnavajKompromitiranCa(view: WebView, url: String?, context: Context): Boolean {
+    fun obravnavajKompromitiranCa(view: WebView, url: String?, context: Context, zastavica: ZastavicaOpozorila): Boolean {
         val cert = view.certificate ?: return false
         if (!jeKompromitiranSslCertificate(cert)) return false
 
         val safeUrl = url ?: ""
         // Prepreči rekurzivno blokiranje lastne opozorilne strani
-        if (safeUrl.startsWith("safeer://compromised-ca", ignoreCase = true)) return true
+        if (jeOpozorilnaStran(safeUrl)) return true
+
+        // Isto navigacijo so že obravnavali drugi povratni klici
+        if (!zastavica.prviZaNavigacijo(safeUrl)) return true
 
         android.util.Log.e("SafeerSecurity", "🛑 BLOKIRANO eMudhra: Kompromitiran vmesni overitelj za $safeUrl")
 
@@ -397,11 +476,15 @@ object EmudhraRevocations {
             safeUrl
         }
 
+        // Blokiran gostitelj: do ponovnega zagona brez predpomnilnika
+        blokirajGostitelja(host)
+        view.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+
         val issuerName = cert.issuedBy?.cName ?: "eMudhra Intermediate CA"
 
         // 2. Pripravi in naloži varnostno opozorilno stran (brez možnosti nadaljevanja)
         val html = ustvariOpozorilnoStran(context, host, safeUrl, issuerName)
-        view.loadDataWithBaseURL("safeer://compromised-ca", html, "text/html", "UTF-8", null)
+        view.loadDataWithBaseURL(OPOZORILNA_STRAN_URL, html, "text/html", "UTF-8", null)
 
         // 3. Prikaži modalni dialog
         val act = context as? android.app.Activity
@@ -446,7 +529,7 @@ object EmudhraRevocations {
         val raw = if (isSl) {
             when (kljuc) {
                 "ssl_compromised_ca_title" -> "⚠️ Varnostno opozorilo: kompromitiran overitelj (eMudhra)"
-                "ssl_compromised_ca_msg" -> "Varna povezava z %1\$s ni mogoča, ker spletno mesto uporablja varnostno potrdilo, ki ga je izdal kompromitiran vmesni overitelj (%2\$s).\n\nZasebni ključi tega overitelja so bili javno kompromitirani, zato lahko kdorkoli ustvari ponarejeno potrdilo za katerokoli spletno mesto.\n\nDostop je bil zaradi zaščite vaših podatkov prekinjen. Nadaljevanje ni dovoljeno."
+                "ssl_compromised_ca_msg" -> "Potrdilo te strani je izdal overitelj, ki je bil preklican zaradi kompromitiranih ključev. Strani zato ne odpremo."
                 "ssl_compromised_ca_badge" -> "🔒 Pravilo ničelnega obvoza (Zero-Bypass)"
                 "ssl_compromised_ca_btn_back" -> "Nazaj na varno"
                 else -> kljuc
@@ -454,7 +537,7 @@ object EmudhraRevocations {
         } else {
             when (kljuc) {
                 "ssl_compromised_ca_title" -> "⚠️ Security Warning: Compromised CA (eMudhra)"
-                "ssl_compromised_ca_msg" -> "A secure connection to %1\$s is not possible because the site presents a security certificate issued by a compromised intermediate Certificate Authority (%2\$s).\n\nPrivate keys for this CA were publicly compromised, allowing attackers to forge certificates for any website.\n\nAccess has been stopped to protect your data. Proceeding is not permitted."
+                "ssl_compromised_ca_msg" -> "This site's certificate was issued by a certificate authority that has been revoked because of compromised keys. We therefore do not open the site."
                 "ssl_compromised_ca_badge" -> "🔒 Zero-Bypass Security Policy"
                 "ssl_compromised_ca_btn_back" -> "Back to Safety"
                 else -> kljuc
@@ -470,7 +553,10 @@ object EmudhraRevocations {
      */
     fun ustvariOpozorilnoStran(context: Context, host: String, url: String, issuerName: String): String {
         val title = niz(context, "ssl_compromised_ca_title")
-        val msg = niz(context, "ssl_compromised_ca_msg", host, issuerName).replace("\n\n", "<br><br>")
+        val hostHtml = android.text.TextUtils.htmlEncode(host)
+        val urlHtml = android.text.TextUtils.htmlEncode(url)
+        val msg = android.text.TextUtils.htmlEncode(niz(context, "ssl_compromised_ca_msg", host, issuerName))
+            .replace("\n\n", "<br><br>")
         val badge = niz(context, "ssl_compromised_ca_badge")
         val backBtn = niz(context, "ssl_compromised_ca_btn_back")
 
@@ -578,11 +664,11 @@ object EmudhraRevocations {
             <div class="card">
                 <div class="icon">🛑</div>
                 <h1>$title</h1>
-                <div class="domain-badge">$host</div>
+                <div class="domain-badge">$hostHtml</div>
                 <p>$msg</p>
                 <div class="zero-bypass">$badge</div>
-                <button class="btn" onclick="if (history.length > 1) { history.back(); } else { window.close(); }">$backBtn</button>
-                <div style="font-size: 11px; color: #777; margin-top: 16px; word-break: break-all;">$url</div>
+                <button class="btn" onclick="location.href='$NAZAJ_NA_VARNO_URL'">$backBtn</button>
+                <div style="font-size: 11px; color: #777; margin-top: 16px; word-break: break-all;">$urlHtml</div>
             </div>
         </body>
         </html>
