@@ -46,6 +46,7 @@ fi
 
 KOTLINC="$TOOLS_DIR/kotlinc/bin/kotlinc"
 KOTLIN_LIB="$TOOLS_DIR/kotlinc/lib/kotlin-stdlib.jar"
+AAPT2="${AAPT2:-$TOOLS_DIR/aapt2}"
 LIB_CLASSPATH=""
 for lib in "$DIR"/libs/*.jar; do LIB_CLASSPATH="$LIB_CLASSPATH:$lib"; done
 BUILD_DIR="$DIR/build"
@@ -62,8 +63,8 @@ mkdir -p "$BUILD_DIR/dex"
 mkdir -p "$RELEASE_DIR"
 
 echo "⚙️ 1/5: Prevajam Android XML vire (AAPT2)..."
-"$TOOLS_DIR/aapt2" compile --dir "$DIR/res" -o "$BUILD_DIR/compiled_res.zip"
-"$TOOLS_DIR/aapt2" link -I "$TOOLS_DIR/android.jar" \
+"$AAPT2" compile --dir "$DIR/res" -o "$BUILD_DIR/compiled_res.zip"
+"$AAPT2" link -I "$TOOLS_DIR/android.jar" \
     --manifest "$DIR/AndroidManifest.xml" \
     --rename-manifest-package "com.safeer.mobile.browser" \
     -A "$DIR/assets" \
@@ -105,6 +106,15 @@ cp "$BUILD_DIR/resources.apk" "$BUILD_DIR/unaligned.apk"
 cd "$BUILD_DIR/dex"
 jar -uf "$BUILD_DIR/unaligned.apk" ./*.dex
 cd "$DIR"
+
+if [ "${ASSEMBLE_ONLY:-}" = "1" ] || [ "${1:-}" = "--assemble" ] || [ "${1:-}" = ":assemble" ]; then
+    echo "=========================================================="
+    echo "🎉 ZGRAJEN APK PAKET (SESTAVLJEN / NEPODPISAN)"
+    echo "Paket: $BUILD_DIR/unaligned.apk"
+    echo "=========================================================="
+    ls -lh "$BUILD_DIR/unaligned.apk"
+    exit 0
+fi
 
 echo "✍️ 5/5: Podpisujem APK paket z namenskim produkcijskim ključem..."
 KEYSTORE_DIR="$DIR/keystore"

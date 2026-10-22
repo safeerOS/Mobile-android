@@ -8,15 +8,16 @@ import java.util.concurrent.TimeUnit
 
 /** Quad9 requires HTTP/2, which Android HttpURLConnection cannot negotiate. */
 object Http2DnsTransport {
-    private val client = okhttp3.OkHttpClient.Builder()
-        .proxy(Proxy.NO_PROXY)
-        .followRedirects(false)
-        .followSslRedirects(false)
-        .connectTimeout(1200L, TimeUnit.MILLISECONDS)
-        .readTimeout(1200L, TimeUnit.MILLISECONDS)
-        .callTimeout(2000L, TimeUnit.MILLISECONDS)
-        .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
-        .build()
+    private val client = EmudhraRevocations.zascitiOkHttp(
+        okhttp3.OkHttpClient.Builder()
+            .proxy(Proxy.NO_PROXY)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .connectTimeout(1200L, TimeUnit.MILLISECONDS)
+            .readTimeout(1200L, TimeUnit.MILLISECONDS)
+            .callTimeout(2000L, TimeUnit.MILLISECONDS)
+            .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
+    ).build()
 
     fun query(endpoint: String, wireQuery: ByteArray, timeoutMs: Int): ByteArray? {
         if (!endpoint.startsWith("https://", true)) return null

@@ -765,6 +765,10 @@ class ChromiumEngineView @JvmOverloads constructor(
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context)) {
+                    onSecurityChanged?.invoke(false)
+                    return
+                }
                 hasEditedForm = false
                 bankCheckGeneration++ // prekliči preverjanje prejšnje strani
                 url?.let { interceptPageUrl = it }
@@ -779,8 +783,20 @@ class ChromiumEngineView @JvmOverloads constructor(
                 }
             }
 
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                super.onPageCommitVisible(view, url)
+                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context)) {
+                    onSecurityChanged?.invoke(false)
+                    return
+                }
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context)) {
+                    onSecurityChanged?.invoke(false)
+                    return
+                }
                 url?.let {
                     view?.let { wv -> scheduleFakeBankCheck(wv, it) }
                     android.util.Log.d("SafeerNav", "finish $it")
@@ -809,6 +825,10 @@ class ChromiumEngineView @JvmOverloads constructor(
 
             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                 super.doUpdateVisitedHistory(view, url, isReload)
+                if (view != null && EmudhraRevocations.obravnavajKompromitiranCa(view, url, context)) {
+                    onSecurityChanged?.invoke(false)
+                    return
+                }
                 url?.let { interceptPageUrl = it }
                 url?.let {
                     android.util.Log.d("SafeerNav", "hist $it")

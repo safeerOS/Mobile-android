@@ -143,6 +143,9 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         SignedThreatIntel.start(this)
         installServiceWorkerThreatShield()
 
+        // 🛡️ Zaščita pred kompromitiranimi vmesnimi overitelji eMudhra v HTTPS klicih
+        EmudhraRevocations.vklopiZaHttpsURLConnection()
+
         // 🛡️ Inicializiraj šifriran DNS (DoH) ali šifriran tunel (Tor / Proxy)
         DoHProxyEngine.applySettings(this) { handleIncomingIntent(intent, isInitial = true) }
 

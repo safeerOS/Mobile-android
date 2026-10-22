@@ -34,8 +34,11 @@ java -cp "$TEST_OUTPUT/sponsorblock.jar" com.safeer.threatfeed.SponsorBlockTestK
 ANDROID_JAR="${ANDROID_JAR:-$PROJECT_DIR/../streamN-TV2/android_tv/.tools/android.jar}"
 DNS_CLASSPATH="$ANDROID_JAR"
 for lib in "$PROJECT_DIR"/libs/*.jar; do DNS_CLASSPATH="$DNS_CLASSPATH:$lib"; done
-"$KOTLINC" -cp "$DNS_CLASSPATH" "$SOURCE_DIR/DoHProxyEngine.kt" "$SOURCE_DIR/LocalDnsProxy.kt" "$SOURCE_DIR/Http2DnsTransport.kt" "$TEST_DIR"/dns-stubs/*.kt "$TEST_DIR/DoHResolverTest.kt" -include-runtime -d "$TEST_OUTPUT/dns.jar"
+"$KOTLINC" -cp "$DNS_CLASSPATH" "$SOURCE_DIR/DoHProxyEngine.kt" "$SOURCE_DIR/LocalDnsProxy.kt" "$SOURCE_DIR/Http2DnsTransport.kt" "$SOURCE_DIR/EmudhraRevocations.kt" "$TEST_DIR"/dns-stubs/*.kt "$TEST_DIR/DoHResolverTest.kt" -include-runtime -d "$TEST_OUTPUT/dns.jar"
 java -cp "$TEST_OUTPUT/dns.jar:$DNS_CLASSPATH" com.safeer.mobile.browser.DoHResolverTestKt
+
+"$KOTLINC" -cp "$DNS_CLASSPATH" "$SOURCE_DIR/EmudhraRevocations.kt" "$TEST_DIR/EmudhraRevocationsTest.kt" -include-runtime -d "$TEST_OUTPUT/emudhra.jar"
+java -cp "$TEST_OUTPUT/emudhra.jar:$DNS_CLASSPATH" com.safeer.mobile.browser.EmudhraRevocationsTestKt
 
 "$KOTLINC" "$SOURCE_DIR/TabSession.kt" "$TEST_DIR/TabSessionTest.kt" -include-runtime -d "$TEST_OUTPUT/session.jar"
 java -jar "$TEST_OUTPUT/session.jar"
