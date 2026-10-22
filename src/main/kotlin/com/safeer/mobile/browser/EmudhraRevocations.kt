@@ -395,6 +395,10 @@ object EmudhraRevocations {
     fun jeOpozorilnaStran(url: String?): Boolean =
         url?.startsWith(OPOZORILNA_STRAN_URL, ignoreCase = true) == true
 
+    /** Naslov za naslovno vrstico: pri opozorilni strani izvirni URL blokirane strani, sicer nespremenjen [url]. */
+    fun prikazniNaslov(url: String, zastavica: ZastavicaOpozorila): String =
+        if (jeOpozorilnaStran(url)) zastavica.izvirniUrl ?: url else url
+
     private fun gostiteljIz(url: String?): String? = try {
         java.net.URI(url ?: "").host?.lowercase(Locale.ROOT)
     } catch (_: Throwable) {
@@ -408,6 +412,16 @@ object EmudhraRevocations {
     class ZastavicaOpozorila {
         private var stevecNavigacije = 0
         private var zadnjiKljuc: String? = null
+
+        /** Izvirni URL blokirane strani: naslovna vrstica kaže njega, ne notranjega naslova opozorilne strani. */
+        @Volatile
+        var izvirniUrl: String? = null
+            private set
+
+        @Synchronized
+        fun zabeleziBlokiraniUrl(url: String) {
+            izvirniUrl = url
+        }
 
         @Synchronized
         fun novaNavigacija() {
@@ -465,6 +479,7 @@ object EmudhraRevocations {
         // Isto navigacijo so že obravnavali drugi povratni klici
         if (!zastavica.prviZaNavigacijo(safeUrl)) return true
 
+        zastavica.zabeleziBlokiraniUrl(safeUrl)
         android.util.Log.e("SafeerSecurity", "🛑 BLOKIRANO eMudhra: Kompromitiran vmesni overitelj za $safeUrl")
 
         // 1. Takoj ustavi vsa mrežna nalaganja
@@ -530,7 +545,7 @@ object EmudhraRevocations {
             when (kljuc) {
                 "ssl_compromised_ca_title" -> "⚠️ Varnostno opozorilo: kompromitiran overitelj (eMudhra)"
                 "ssl_compromised_ca_msg" -> "Potrdilo te strani je izdal overitelj, ki je bil preklican zaradi kompromitiranih ključev. Strani zato ne odpremo."
-                "ssl_compromised_ca_badge" -> "🔒 Pravilo ničelnega obvoza (Zero-Bypass)"
+                "ssl_compromised_ca_badge" -> "🔒 Iz varnostnih razlogov te strani ni mogoče odpreti."
                 "ssl_compromised_ca_btn_back" -> "Nazaj na varno"
                 else -> kljuc
             }
@@ -538,7 +553,7 @@ object EmudhraRevocations {
             when (kljuc) {
                 "ssl_compromised_ca_title" -> "⚠️ Security Warning: Compromised CA (eMudhra)"
                 "ssl_compromised_ca_msg" -> "This site's certificate was issued by a certificate authority that has been revoked because of compromised keys. We therefore do not open the site."
-                "ssl_compromised_ca_badge" -> "🔒 Zero-Bypass Security Policy"
+                "ssl_compromised_ca_badge" -> "🔒 For security reasons this page cannot be opened."
                 "ssl_compromised_ca_btn_back" -> "Back to Safety"
                 else -> kljuc
             }

@@ -59,7 +59,10 @@ class ChromiumEngineView @JvmOverloads constructor(
     }
 
     private fun visibleUrl(url: String): String =
-        PdfPregledovalnik.javniNaslov(if (url == "safeer://offline") failedNavigationUrl ?: url else url)
+        PdfPregledovalnik.javniNaslov(
+            if (url == "safeer://offline") failedNavigationUrl ?: url
+            else EmudhraRevocations.prikazniNaslov(url, emudhraZastavica)
+        )
 
     var isDarkMode: Boolean = true
 
@@ -811,7 +814,7 @@ class ChromiumEngineView @JvmOverloads constructor(
                     onUrlChanged?.invoke(visibleUrl(it))
                     onSecurityChanged?.invoke(it.startsWith("https://", ignoreCase = true))
                     val pageTitle = title ?: ""
-                    if (it != "safeer://offline") onPageLoaded?.invoke(PdfPregledovalnik.javniNaslov(it), pageTitle)
+                    if (it != "safeer://offline") onPageLoaded?.invoke(visibleUrl(it), pageTitle)
                     if (!PdfPregledovalnik.jePregledovalnik(it)) view?.let { wv ->
                         UserScriptManager.injectOnPageFinished(wv, isDarkMode, isDesktopMode)
                         installFormProtection(wv)

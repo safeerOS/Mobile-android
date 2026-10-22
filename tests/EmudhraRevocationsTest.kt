@@ -13,6 +13,7 @@ fun main() {
     testPreverjanjeVerigeInTrustManager()
     testPreverjanjeIzdajateljaInDName()
     testZastavicaOpozorila()
+    testPrikazniNaslov()
     testNazajNaVarno()
     println("PASS: eMudhra revocations: 16 certs verified, SHA-256/SPKI match, chain rejection, clean certs pass")
 }
@@ -274,6 +275,15 @@ fun testZastavicaOpozorila() {
     check(z.prviZaNavigacijo("https://a.example/")) { "Nova navigacija mora znova pokazati opozorilo" }
     // drugi URL v isti navigaciji (preusmeritev)
     check(z.prviZaNavigacijo("https://b.example/"))
+}
+
+fun testPrikazniNaslov() {
+    val z = EmudhraRevocations.ZastavicaOpozorila()
+    check(EmudhraRevocations.prikazniNaslov("https://a.example/", z) == "https://a.example/")
+    check(EmudhraRevocations.prikazniNaslov("safeer://compromised-ca", z) == "safeer://compromised-ca") { "Brez zabeleženega URL ostane nespremenjen" }
+    z.zabeleziBlokiraniUrl("https://slaba.example/pot")
+    check(EmudhraRevocations.prikazniNaslov("safeer://compromised-ca", z) == "https://slaba.example/pot") { "Naslovna vrstica kaže izvirni URL" }
+    check(EmudhraRevocations.prikazniNaslov("https://a.example/", z) == "https://a.example/") { "Druge strani niso prizadete" }
 }
 
 fun testNazajNaVarno() {
