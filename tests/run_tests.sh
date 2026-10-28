@@ -47,3 +47,7 @@ java -jar "$TEST_OUTPUT/browser-state.jar"
 
 # install_safeer.sh: preverba SHA-256 po imenu datoteke izdaje (brez omrezja in telefona; pregled 28. 10. 2026)
 bash "$TEST_DIR/run_install_tests.sh"
+
+# Koda QR: zasebni naslov sredisca, cel odtis, opozorilo ob preselitvi (pregled 28. 10. 2026)
+"$KOTLINC" "$SOURCE_DIR/link/QrPravila.kt" "$TEST_DIR/QrPravilaTest.kt" -include-runtime -d "$TEST_OUTPUT/qr.jar"
+java -cp "$TEST_OUTPUT/qr.jar" com.safeer.mobile.browser.link.QrPravilaTestKt
