@@ -44,3 +44,6 @@ java -cp "$TEST_OUTPUT/emudhra.jar:$DNS_CLASSPATH" com.safeer.mobile.browser.Emu
 java -jar "$TEST_OUTPUT/session.jar"
 "$KOTLINC" "$TEST_DIR"/browser-stubs/*.kt "$SOURCE_DIR/PreferencesManager.kt" "$SOURCE_DIR/AuthenticationPages.kt" "$SOURCE_DIR/TabSession.kt" "$SOURCE_DIR/TabManager.kt" "$TEST_DIR/BrowserStateTest.kt" -include-runtime -d "$TEST_OUTPUT/browser-state.jar"
 java -jar "$TEST_OUTPUT/browser-state.jar"
+
+# install_safeer.sh: preverba SHA-256 po imenu datoteke izdaje (brez omrezja in telefona; pregled 28. 10. 2026)
+bash "$TEST_DIR/run_install_tests.sh"
