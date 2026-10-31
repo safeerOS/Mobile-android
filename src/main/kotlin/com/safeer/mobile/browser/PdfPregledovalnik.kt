@@ -149,21 +149,41 @@ object PdfPregledovalnik {
             }
         }
         return try {
-            val povezava = URL(d.url).openConnection() as HttpURLConnection
-            povezava.instanceFollowRedirects = true
-            povezava.connectTimeout = 15000
-            povezava.readTimeout = 60000
-            d.userAgent?.let { povezava.setRequestProperty("User-Agent", it) }
-            povezava.setRequestProperty("Accept", "application/pdf,*/*")
-            try {
-                CookieManager.getInstance().getCookie(d.url)?.takeIf { it.isNotBlank() }?.let { povezava.setRequestProperty("Cookie", it) }
-            } catch (_: Throwable) { }
-            val koda = povezava.responseCode
-            if (koda !in 200..299) {
-                povezava.disconnect()
-                return napaka(koda, "Streznik je odgovoril $koda")
+            var urlStr = d.url
+            var skokov = 0
+            var povezava: HttpURLConnection? = null
+            while (skokov <= 5) {
+                povezava = URL(urlStr).openConnection() as HttpURLConnection
+                povezava.instanceFollowRedirects = false
+                povezava.connectTimeout = 15000
+                povezava.readTimeout = 60000
+                d.userAgent?.let { povezava.setRequestProperty("User-Agent", it) }
+                povezava.setRequestProperty("Accept", "application/pdf,*/*")
+                try {
+                    android.webkit.CookieManager.getInstance().getCookie(urlStr)?.takeIf { it.isNotBlank() }?.let { povezava.setRequestProperty("Cookie", it) }
+                } catch (_: Throwable) { }
+                
+                val koda = povezava.responseCode
+                if (koda in 300..399) {
+                    val noviUrl = povezava.getHeaderField("Location")
+                    povezava.disconnect()
+                    if (noviUrl.isNullOrBlank() || !PdfPreusmeritve.dovoljen(urlStr, noviUrl)) {
+                        return napaka(koda, "Neveljavna ali prepovedana preusmeritev")
+                    }
+                    urlStr = noviUrl
+                    skokov++
+                    continue
+                }
+                
+                if (koda !in 200..299) {
+                    povezava.disconnect()
+                    return napaka(koda, "Streznik je odgovoril $koda")
+                }
+                break
             }
-            val dolzina = povezava.contentLengthLong
+            if (skokov > 5) return napaka(302, "Prevec preusmeritev")
+            
+            val dolzina = povezava!!.contentLengthLong
             val g = glave().toMutableMap()
             if (dolzina > 0) g["Content-Length"] = dolzina.toString()
             g["Accept-Ranges"] = "none"

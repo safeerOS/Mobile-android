@@ -12,6 +12,8 @@ if ! [[ "$JAVA_MAJOR" =~ ^[0-9]+$ ]] || [ "$JAVA_MAJOR" -lt 17 ]; then
 fi
 TEST_OUTPUT="$(mktemp -d /tmp/safeer-tests.XXXXXX)"
 trap 'rm -rf "$TEST_OUTPUT"' EXIT
+"$KOTLINC" "$SOURCE_DIR/PdfPreusmeritve.kt" "$TEST_DIR/PdfPreusmeritveTest.kt" -include-runtime -d "$TEST_OUTPUT/pdf-preusmeritve.jar"
+java -jar "$TEST_OUTPUT/pdf-preusmeritve.jar"
 "$KOTLINC" "$SOURCE_DIR/link/QrPravila.kt" "$TEST_DIR/QrPravilaTest.kt" -include-runtime -d "$TEST_OUTPUT/qr-pravila.jar"
 java -jar "$TEST_OUTPUT/qr-pravila.jar"
 "$KOTLINC" "$SOURCE_DIR/UrlSanitizer.kt" "$SOURCE_DIR/AuthenticationPages.kt" "$TEST_DIR/LoginPolicyTest.kt" -include-runtime -d "$TEST_OUTPUT/login.jar"
