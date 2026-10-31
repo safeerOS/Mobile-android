@@ -9,8 +9,10 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import org.json.JSONObject
+import com.safeer.mobile.browser.cast.HubKrmilnik
 import com.safeer.mobile.browser.cast.HubPairing
 import com.safeer.mobile.browser.cast.HubTls
+import com.safeer.mobile.browser.cast.KrogNaprave
 import java.net.HttpURLConnection
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
@@ -53,8 +55,8 @@ class QrPrijavaActivity : Activity() {
             }
         }
 
-        private fun jeZasebniNaslov(h: String?): Boolean =
-            h != null && (h.startsWith("10.") || h.startsWith("192.168.") || Regex("^172\\.(1[6-9]|2[0-9]|3[01])\\.").containsMatchIn(h))
+        /** Okteti, ne predpona niza (»10.evil.com« se zacne z »10.«) - QrPravila.jeZasebniIpv4. */
+        private fun jeZasebniNaslov(h: String?): Boolean = QrPravila.jeZasebniIpv4(h)
 
         fun razcleniPridruzitev(uri: Uri?): Pridruzitev? {
             val p = parametri(uri) ?: return null
@@ -63,12 +65,16 @@ class QrPrijavaActivity : Activity() {
             val odtis = p["f"].orEmpty().lowercase()
             val naslov = p["a"].orEmpty()
             if (!Regex("^[0-9a-f]{8,64}$").matches(id) || skrivnost.length !in 16..128 ||
-                !Regex("^[0-9a-f]{64}$").matches(odtis) || !Regex("^[0-9.]{7,15}:[0-9]{2,5}$").matches(naslov)) return null
+                !QrPravila.veljavenOdtis(odtis) || !QrPravila.zasebniNaslovSredisca(naslov)) return null
             return Pridruzitev(id, skrivnost, odtis, naslov)
         }
 
-        /** (qr_id, skrivnost, odtis16) iz povezave ali null, ce povezava ni prijava s QR. */
-        fun razcleni(uri: Uri?): Triple<String, String, String>? {
+        /** (qr_id, skrivnost, cel odtis potrdila) iz povezave ali null, ce povezava ni prijava s QR. */
+        /** Prijava s QR kodo: qr_id, skrivnost, odtis16 in naslov Huba, ki je kodo izdal (peer-to-peer -
+         * naprava se poveze nanj neposredno, ne na huba, ki mu je morda ze zaupala prej). */
+        data class Prijava(val id: String, val skrivnost: String, val odtis: String, val naslov: String)
+
+        fun razcleni(uri: Uri?): Prijava? {
             if (uri == null) return null
             val parametri: Map<String, String> = when {
                 uri.scheme == "safeer" && uri.host == "link" && uri.path == "/qr" ->
@@ -82,14 +88,16 @@ class QrPrijavaActivity : Activity() {
             val id = parametri["i"].orEmpty()
             val skrivnost = parametri["s"].orEmpty()
             val odtis = parametri["f"].orEmpty().lowercase()
+            val naslov = parametri["a"].orEmpty()
             if (!Regex("^[0-9a-f]{8,64}$").matches(id) || skrivnost.length !in 16..128 ||
-                !Regex("^[0-9a-f]{16,64}$").matches(odtis)) return null
-            return Triple(id, skrivnost, odtis)
+                !QrPravila.veljavenOdtis(odtis) ||
+                (naslov.isNotEmpty() && !QrPravila.zasebniNaslovSredisca(naslov))) return null
+            return Prijava(id, skrivnost, odtis, naslov)
         }
     }
 
     private val glavna = Handler(Looper.getMainLooper())
-    private var qr: Triple<String, String, String>? = null
+    private var qr: Prijava? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,14 +105,14 @@ class QrPrijavaActivity : Activity() {
         qr = razcleni(intent?.data)
         val koda = qr
         if (koda == null) { sporocilo(b("neveljavna")); return }
-        if (HubPairing.token(this).isNullOrBlank() || naslovHuba().isBlank()) { sporocilo(b("niPovezana")); return }
+        if (HubPairing.token(this).isNullOrBlank()) { sporocilo(b("niPovezana")); return }
         Thread {
             val (odgovor, videni) = klic("/cast/pair/qr/info", koda)
             glavna.post {
                 if (isFinishing) return@post
                 when {
                     odgovor == null -> sporocilo(b("niHuba"))
-                    videni == null || !videni.lowercase().startsWith(koda.third) -> sporocilo(b("drugLink"))
+                    !QrPravila.odtisUstreza(videni, koda.odtis) -> sporocilo(b("drugLink"))
                     odgovor.optString("device_id").isBlank() -> sporocilo(napaka(odgovor))
                     else -> vprasaj(odgovor.optString("name").ifBlank { odgovor.optString("device_id") })
                 }
@@ -113,21 +121,37 @@ class QrPrijavaActivity : Activity() {
     }
 
     /**
-     * Ta naprava se pridruzi srediscu, ki je pokazalo kodo (televizor). Uporabnik je kodo namenoma
-     * poskeniral, zato ni dodatnega vprasanja; odtis potrdila iz kode potrdi, da je to pravo sredisce.
+     * Ta naprava se pridruzi srediscu, ki je pokazalo kodo (televizor). Povezavo safeer://link/qr lahko odpre tudi
+     * spletna stran ali druga aplikacija, ne samo skeniranje (pregled 28. 10. 2026), zato vedno vprasamo - z naslovom
+     * in odtisom sredisca - in posebej opozorimo, ce bi naprava zapustila Safeer Link, ki mu ze zaupa. Naslov je
+     * samo zasebni (QrPravila.zasebniNaslovSredisca); odtis potrdila iz kode potrdi, da je to pravo sredisce.
      */
     private fun pridruzi(p: Pridruzitev) {
-        if (!HubPairing.token(this).isNullOrBlank() && HubTls.pripetiOdtis(this) == p.odtis) {
+        val imaZeton = !HubPairing.token(this).isNullOrBlank()
+        val pripeti = HubTls.pripetiOdtis(this)
+        if (imaZeton && pripeti.equals(p.odtis, ignoreCase = true)) {
             sporocilo(b("zePovezana")); return
         }
+        val besedilo = b("vprasajPridruzi").replace("{naslov}", p.naslov).replace("{odtis}", QrPravila.kratekOdtis(p.odtis)) +
+            (if (QrPravila.preselitev(imaZeton, pripeti, p.odtis)) "\n\n" + b("preselitev") else "")
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle(b("naslovPridruzi"))
+            .setMessage(besedilo)
+            .setPositiveButton(b("pridruzi")) { _, _ -> povezi(p) }
+            .setNegativeButton(b("ne")) { _, _ -> finish() }
+            .setOnCancelListener { finish() }
+            .show()
+    }
+
+    private fun povezi(p: Pridruzitev) {
         val cakam = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle(b("naslovPridruzi")).setMessage(b("povezujem")).setCancelable(false).show()
         HubPairing.pridruziSQr(this, p.naslov, p.odtis, p.id, p.skrivnost, com.safeer.mobile.browser.cast.HubKrmilnik.lastniId(),
-            "Safeer (" + android.os.Build.MODEL + ")") { uspelo, razlog ->
+            applicationInfo.loadLabel(packageManager).toString() + " (" + android.os.Build.MODEL + ")") { uspelo, razlog ->
             try { cakam.dismiss() } catch (_: Throwable) { }
             if (isFinishing) return@pridruziSQr
             if (uspelo) {
-                LinkSprejemnik.zagotovi(this)
+                try { LinkSprejemnik.zagotovi(this) } catch (_: Throwable) { }
                 sporocilo(b("pridruzena"), b("naslovPridruzi"))
             } else sporocilo(when (razlog) {
                 "qr_ne_obstaja", "prevec_poskusov" -> b("poteklaTv")
@@ -155,7 +179,7 @@ class QrPrijavaActivity : Activity() {
                 if (isFinishing) return@post
                 when {
                     odgovor == null -> sporocilo(b("niHuba"))
-                    videni == null || !videni.lowercase().startsWith(koda.third) -> sporocilo(b("drugLink"))
+                    !QrPravila.odtisUstreza(videni, koda.odtis) -> sporocilo(b("drugLink"))
                     odgovor.optBoolean("approved") -> sporocilo(b("uspeh").replace("{ime}", ime))
                     else -> sporocilo(napaka(odgovor))
                 }
@@ -184,17 +208,23 @@ class QrPrijavaActivity : Activity() {
         getSharedPreferences(HubPairing.PREFS_NAME, Context.MODE_PRIVATE).getString("hub_url", "") ?: ""
 
     /**
-     * POST na hub, ki mu ta naprava zaupa (pripeti odtis).
+     * POST neposredno na Hub, ki je kodo izdal (naslov iz same kode) - peer-to-peer. Odtis, ki mu
+     * zaupamo za TO povezavo, je tisti iz kode (uporabnik jo je fizicno videl/skeniral); kljuc iz
+     * kroga (ce gre za izvoljeni hub) dodamo se vedno, ce je na voljo.
      * Vrne (odgovor ali null ob napaki povezave, odtis potrdila, ki smo ga videli).
      */
-    private fun klic(pot: String, koda: Triple<String, String, String>): Pair<JSONObject?, String?> {
+    private fun klic(pot: String, koda: Prijava): Pair<JSONObject?, String?> {
         var videni: String? = null
         return try {
-            val osnova = HubPairing.httpBase(naslovHuba())
+            val ciljniNaslov = koda.naslov.ifBlank { naslovHuba() }
+            val osnova = HubPairing.httpBase(ciljniNaslov)
+            if (osnova.isBlank()) return null to null
             val povezava = URL(osnova + pot).openConnection() as HttpURLConnection
             if (povezava !is HttpsURLConnection) return null to null
-            val odtis = HubTls.pripetiOdtis(this) ?: return null to null
-            val (tovarna, zaupnik) = HubTls.odjemalec(odtis)
+            val kljuc = try {
+                HubKrmilnik.izvoljeniHub(this)?.let { KrogNaprave.kljucHuba(this, it.id) }
+            } catch (_: Throwable) { null }
+            val (tovarna, zaupnik) = HubTls.odjemalec(koda.odtis, kljuc)
             povezava.sslSocketFactory = tovarna
             povezava.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
             try {
@@ -204,7 +234,7 @@ class QrPrijavaActivity : Activity() {
                 povezava.setRequestProperty("x-safeer-token", HubPairing.token(this).orEmpty())
                 povezava.setRequestProperty("Content-Type", "application/json")
                 povezava.doOutput = true
-                val telo = JSONObject().put("qr_id", koda.first).put("secret", koda.second).toString()
+                val telo = JSONObject().put("qr_id", koda.id).put("secret", koda.skrivnost).toString()
                 povezava.outputStream.use { it.write(telo.toByteArray(Charsets.UTF_8)) }
                 val status = povezava.responseCode
                 videni = zaupnik.videni
@@ -231,7 +261,12 @@ class QrPrijavaActivity : Activity() {
             "ne" -> if (sl) "Ne" else "No"
             "uspeh" -> if (sl) "Računalnik »{ime}« je prijavljen." else "The computer “{ime}” is signed in."
             "naslovPridruzi" -> if (sl) "Safeer Link" else "Safeer Link"
-            "povezujem" -> if (sl) "Povezujem s televizorjem …" else "Connecting to the TV …"
+            "vprasajPridruzi" -> if (sl) "Povežem to napravo s Safeer Linkom na {naslov}?\nOdtis: {odtis}\n\nPoveži jo samo, če si to kodo pravkar poskeniral na svoji napravi."
+                else "Connect this device to the Safeer Link at {naslov}?\nFingerprint: {odtis}\n\nOnly connect if you just scanned this code on your own device."
+            "preselitev" -> if (sl) "Pozor: ta naprava je že v drugem Safeer Linku. Če nadaljuješ, ga zapusti."
+                else "Warning: this device is already in another Safeer Link. Continuing will leave it."
+            "pridruzi" -> if (sl) "Poveži" else "Connect"
+            "povezujem" -> if (sl) "Povezujem …" else "Connecting …"
             "pridruzena" -> if (sl) "Povezano. Ta naprava je zdaj v tvojem Safeer Linku." else "Connected. This device is now in your Safeer Link."
             "zePovezana" -> if (sl) "Ta naprava je že povezana s tem Safeer Linkom." else "This device is already connected to this Safeer Link."
             "neveljavna" -> if (sl) "Ta koda ni koda za prijavo v Safeer." else "This is not a Safeer sign-in code."
@@ -243,8 +278,8 @@ class QrPrijavaActivity : Activity() {
                 else "This code is not for your Safeer Link. Sign-in was not allowed."
             "potekla" -> if (sl) "Koda je potekla. Na računalniku se je pokazala nova – poskeniraj jo."
                 else "The code has expired. The computer is showing a new one – scan that."
-            "poteklaTv" -> if (sl) "Koda je potekla. Televizor je že pokazal novo – poskeniraj jo."
-                else "The code has expired. The TV is already showing a new one – scan that."
+            "poteklaTv" -> if (sl) "Koda je potekla. Naprava je že pokazala novo – poskeniraj jo."
+                else "The code has expired. The device is already showing a new one – scan that."
             "prevecNaprav" -> if (sl) "V Safeer Linku je že preveč naprav. Odstrani katero, ki je ne uporabljaš."
                 else "Safeer Link already has too many devices. Remove one you no longer use."
             else -> kljuc
