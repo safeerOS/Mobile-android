@@ -14,8 +14,12 @@ if [ -z "$APK_URL" ]; then
     echo "❌ Ne najdem zadnje izdaje. Prenesi APK s https://safeer.si/browser/android/"
     exit 1
 fi
-TEMP_APK="/tmp/Safeer-Browser.apk"
-TEMP_SHA="/tmp/SAFEER_SHA256SUMS"
+if [ -z "${TEMP_APK:-}" ]; then
+    D="$(mktemp -d)"
+    trap 'rm -rf "$D"' EXIT
+    TEMP_APK="$D/Safeer-Browser.apk"
+    TEMP_SHA="$D/Safeer-Browser.SHA256SUMS"
+fi
 
 echo "=========================================================="
 echo "🛡️ SAFEER BROWSER: 1-KLIK NAMESTITEV"
