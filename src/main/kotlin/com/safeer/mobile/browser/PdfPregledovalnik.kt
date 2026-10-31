@@ -165,7 +165,8 @@ object PdfPregledovalnik {
                 
                 val koda = povezava.responseCode
                 if (koda in 300..399) {
-                    val noviUrl = povezava.getHeaderField("Location")
+                    // Location je lahko relativen (/pot): razresimo ga glede na trenutni naslov.
+                    val noviUrl = povezava.getHeaderField("Location")?.let { l -> try { URL(URL(urlStr), l).toString() } catch (_: Throwable) { null } }
                     povezava.disconnect()
                     if (noviUrl.isNullOrBlank() || !PdfPreusmeritve.dovoljen(urlStr, noviUrl)) {
                         return napaka(koda, "Neveljavna ali prepovedana preusmeritev")
