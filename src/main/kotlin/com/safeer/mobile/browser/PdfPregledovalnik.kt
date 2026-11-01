@@ -164,7 +164,7 @@ object PdfPregledovalnik {
                 } catch (_: Throwable) { }
                 
                 val koda = povezava.responseCode
-                if (koda in 300..399) {
+                if (koda == 301 || koda == 302 || koda == 303 || koda == 307 || koda == 308) {
                     // Location je lahko relativen (/pot): razresimo ga glede na trenutni naslov.
                     val noviUrl = povezava.getHeaderField("Location")?.let { l -> try { URL(URL(urlStr), l).toString() } catch (_: Throwable) { null } }
                     povezava.disconnect()

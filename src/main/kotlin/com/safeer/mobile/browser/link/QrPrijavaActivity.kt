@@ -8,8 +8,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.safeer.mobile.browser.I18n
 import org.json.JSONObject
-import com.safeer.mobile.browser.cast.HubKrmilnik
 import com.safeer.mobile.browser.cast.HubPairing
 import com.safeer.mobile.browser.cast.HubTls
 import java.net.HttpURLConnection
@@ -34,7 +34,7 @@ class QrPrijavaActivity : Activity() {
         data class Pridruzitev(val id: String, val skrivnost: String, val odtis: String, val naslov: String)
 
         /** Ali je povezava katera koli koda Safeer (prijava racunalnika ali pridruzitev srediscu). */
-        fun jeSafeerKoda(uri: Uri?): Boolean = razcleni(uri) != null || razcleniPridruzitev(uri) != null
+        fun jeSafeerKoda(uri: Uri?): Boolean = razcleni(uri) != null || razcleniPridruzitev(uri) != null || jeStaraPrijava(uri)
 
         private fun parametri(uri: Uri?): Map<String, String>? {
             if (uri == null) return null
@@ -68,12 +68,18 @@ class QrPrijavaActivity : Activity() {
             return Pridruzitev(id, skrivnost, odtis, naslov)
         }
 
-        /** (qr_id, skrivnost, cel odtis potrdila) iz povezave ali null, ce povezava ni prijava s QR. */
-        /** Prijava s QR kodo: qr_id, skrivnost, odtis16 in naslov Huba, ki je kodo izdal (peer-to-peer -
-         * naprava se poveze nanj neposredno, ne na huba, ki mu je morda ze zaupala prej). */
+        /**
+         * Prijava s QR kodo: qr_id, skrivnost in cel odtis potrdila. Naslov »a« iz kode za prijavo NE uporabimo:
+         * zahteve z x-safeer-token gredo samo na pripeti Hub te naprave (odtis + hub_url iz nastavitev).
+         */
         data class Prijava(val id: String, val skrivnost: String, val odtis: String, val naslov: String)
 
-        fun razcleni(uri: Uri?): Prijava? {
+        fun razcleni(uri: Uri?): Prijava? = prijavaIz(uri)?.takeIf { QrPravila.veljavenOdtis(it.odtis) }
+
+        /** Koda za prijavo v stari obliki (odtis s 16 znaki): racunalnik je treba posodobiti. */
+        fun jeStaraPrijava(uri: Uri?): Boolean = prijavaIz(uri)?.let { QrPravila.starOdtis(it.odtis) } == true
+
+        private fun prijavaIz(uri: Uri?): Prijava? {
             if (uri == null) return null
             val parametri: Map<String, String> = when {
                 uri.scheme == "safeer" && uri.host == "link" && uri.path == "/qr" ->
@@ -89,7 +95,7 @@ class QrPrijavaActivity : Activity() {
             val odtis = parametri["f"].orEmpty().lowercase()
             val naslov = parametri["a"].orEmpty()
             if (!Regex("^[0-9a-f]{8,64}$").matches(id) || skrivnost.length !in 16..128 ||
-                !QrPravila.veljavenOdtis(odtis) ||
+                !(QrPravila.veljavenOdtis(odtis) || QrPravila.starOdtis(odtis)) ||
                 (naslov.isNotEmpty() && !QrPravila.zasebniNaslovSredisca(naslov))) return null
             return Prijava(id, skrivnost, odtis, naslov)
         }
@@ -103,8 +109,13 @@ class QrPrijavaActivity : Activity() {
         razcleniPridruzitev(intent?.data)?.let { pridruzi(it); return }
         qr = razcleni(intent?.data)
         val koda = qr
-        if (koda == null) { sporocilo(b("neveljavna")); return }
-        if (HubPairing.token(this).isNullOrBlank()) { sporocilo(b("niPovezana")); return }
+        if (koda == null) { sporocilo(b(if (jeStaraPrijava(intent?.data)) "staraKoda" else "neveljavna")); return }
+        val pripeti = HubTls.pripetiOdtis(this)
+        if (HubPairing.token(this).isNullOrBlank() || naslovHuba().isBlank() || pripeti.isNullOrBlank()) {
+            sporocilo(b("niPovezana")); return
+        }
+        // Koda mora biti za NAS pripeti Hub - sicer zavrnemo, preden karkoli poslje zeton v omrezje.
+        if (!QrPravila.prijavaDovoljena(pripeti, koda.odtis)) { sporocilo(b("drugLink")); return }
         Thread {
             val (odgovor, videni) = klic("/cast/pair/qr/info", koda)
             glavna.post {
@@ -150,7 +161,7 @@ class QrPrijavaActivity : Activity() {
             try { cakam.dismiss() } catch (_: Throwable) { }
             if (isFinishing) return@pridruziSQr
             if (uspelo) {
-                try { LinkSprejemnik.zagotovi(this) } catch (_: Throwable) { }
+                try { LinkSprejemnik.zagotovi(this) } catch (e: Throwable) { Log.w(TAG, "LinkSprejemnik se ni zagnal", e) }
                 sporocilo(b("pridruzena"), b("naslovPridruzi"))
             } else sporocilo(when (razlog) {
                 "qr_ne_obstaja", "prevec_poskusov" -> b("poteklaTv")
@@ -172,6 +183,7 @@ class QrPrijavaActivity : Activity() {
 
     private fun dovoli(ime: String) {
         val koda = qr ?: return finish()
+        if (!QrPravila.prijavaDovoljena(HubTls.pripetiOdtis(this), koda.odtis)) { sporocilo(b("drugLink")); return }
         Thread {
             val (odgovor, videni) = klic("/cast/pair/qr/approve", koda)
             glavna.post {
@@ -207,21 +219,20 @@ class QrPrijavaActivity : Activity() {
         getSharedPreferences(HubPairing.PREFS_NAME, Context.MODE_PRIVATE).getString("hub_url", "") ?: ""
 
     /**
-     * POST neposredno na Hub, ki je kodo izdal (naslov iz same kode) - peer-to-peer. Odtis, ki mu
-     * zaupamo za TO povezavo, je tisti iz kode (uporabnik jo je fizicno videl/skeniral); kljuc iz
-     * kroga (ce gre za izvoljeni hub) dodamo se vedno, ce je na voljo.
+     * POST na pripeti Hub te naprave (hub_url iz nastavitev, pripeti odtis potrdila) - nikoli na naslov iz kode,
+     * ker zahteva nosi x-safeer-token. Zaupnik zahteva pripeti odtis; koda z drugim odtisom sem sploh ne pride.
      * Vrne (odgovor ali null ob napaki povezave, odtis potrdila, ki smo ga videli).
      */
     private fun klic(pot: String, koda: Prijava): Pair<JSONObject?, String?> {
         var videni: String? = null
         return try {
-            val ciljniNaslov = koda.naslov.ifBlank { naslovHuba() }
-            val osnova = HubPairing.httpBase(ciljniNaslov)
+            val pripeti = HubTls.pripetiOdtis(this)
+            if (!QrPravila.prijavaDovoljena(pripeti, koda.odtis)) return null to null
+            val osnova = HubPairing.httpBase(naslovHuba())
             if (osnova.isBlank()) return null to null
             val povezava = URL(osnova + pot).openConnection() as HttpURLConnection
-            if (povezava !is HttpsURLConnection) return null to null
-            // Mobile-android nima izvoljenega Huba (HubKrmilnik.izvoljeniHub je samo v Android-tv): zaupamo odtisu iz kode.
-            val (tovarna, zaupnik) = HubTls.odjemalec(koda.odtis)
+            if (povezava !is HttpsURLConnection) { povezava.disconnect(); return null to null }
+            val (tovarna, zaupnik) = HubTls.odjemalec(pripeti)
             povezava.sslSocketFactory = tovarna
             povezava.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
             try {
@@ -247,39 +258,108 @@ class QrPrijavaActivity : Activity() {
         }
     }
 
-    /** Besedila v jeziku naprave (slovenscina ali anglescina). */
+    /** Besedila v jeziku Safeerja (I18n.getEffectiveLanguage: sl, en, de, es, fr, it; drugace anglescina). */
     private fun b(kljuc: String): String {
-        val sl = try { resources.configuration.locales[0].language == "sl" } catch (_: Throwable) { false }
-        return when (kljuc) {
-            "naslov" -> if (sl) "Prijava v Safeer OS" else "Sign in to Safeer OS"
-            "vprasanje" -> if (sl) "Dovoliš računalniku »{ime}« dostop do tvojih naprav v Safeer Linku?"
-                else "Allow the computer “{ime}” to access your devices in Safeer Link?"
-            "dovoli" -> if (sl) "Dovoli" else "Allow"
-            "ne" -> if (sl) "Ne" else "No"
-            "uspeh" -> if (sl) "Računalnik »{ime}« je prijavljen." else "The computer “{ime}” is signed in."
-            "naslovPridruzi" -> if (sl) "Safeer Link" else "Safeer Link"
-            "vprasajPridruzi" -> if (sl) "Povežem to napravo s Safeer Linkom na {naslov}?\nOdtis: {odtis}\n\nPoveži jo samo, če si to kodo pravkar poskeniral na svoji napravi."
-                else "Connect this device to the Safeer Link at {naslov}?\nFingerprint: {odtis}\n\nOnly connect if you just scanned this code on your own device."
-            "preselitev" -> if (sl) "Pozor: ta naprava je že v drugem Safeer Linku. Če nadaljuješ, ga zapusti."
-                else "Warning: this device is already in another Safeer Link. Continuing will leave it."
-            "pridruzi" -> if (sl) "Poveži" else "Connect"
-            "povezujem" -> if (sl) "Povezujem …" else "Connecting …"
-            "pridruzena" -> if (sl) "Povezano. Ta naprava je zdaj v tvojem Safeer Linku." else "Connected. This device is now in your Safeer Link."
-            "zePovezana" -> if (sl) "Ta naprava je že povezana s tem Safeer Linkom." else "This device is already connected to this Safeer Link."
-            "neveljavna" -> if (sl) "Ta koda ni koda za prijavo v Safeer." else "This is not a Safeer sign-in code."
-            "niPovezana" -> if (sl) "Ta naprava še ni v Safeer Linku. Najprej jo poveži, nato poskeniraj kodo znova."
-                else "This device is not in Safeer Link yet. Connect it first, then scan the code again."
-            "niHuba" -> if (sl) "Safeer Link se ne oglasi. Preveri, da sta napravi v istem domačem omrežju."
-                else "Safeer Link is not answering. Check that both devices are on the same home network."
-            "drugLink" -> if (sl) "Ta koda ni za tvoj Safeer Link. Prijave nisem dovolil."
-                else "This code is not for your Safeer Link. Sign-in was not allowed."
-            "potekla" -> if (sl) "Koda je potekla. Na računalniku se je pokazala nova – poskeniraj jo."
-                else "The code has expired. The computer is showing a new one – scan that."
-            "poteklaTv" -> if (sl) "Koda je potekla. Naprava je že pokazala novo – poskeniraj jo."
-                else "The code has expired. The device is already showing a new one – scan that."
-            "prevecNaprav" -> if (sl) "V Safeer Linku je že preveč naprav. Odstrani katero, ki je ne uporabljaš."
-                else "Safeer Link already has too many devices. Remove one you no longer use."
-            else -> kljuc
-        }
+        val jezik = try { I18n.getEffectiveLanguage(this) } catch (_: Throwable) { "en" }
+        return BESEDILA[kljuc]?.let { it[jezik] ?: it["en"] } ?: kljuc
     }
+
+    private val BESEDILA: Map<String, Map<String, String>> = mapOf(
+        "naslov" to mapOf(
+            "sl" to "Prijava v Safeer OS", "en" to "Sign in to Safeer OS", "de" to "Bei Safeer OS anmelden",
+            "es" to "Iniciar sesión en Safeer OS", "fr" to "Connexion à Safeer OS", "it" to "Accedi a Safeer OS"),
+        "vprasanje" to mapOf(
+            "sl" to "Dovoliš računalniku »{ime}« dostop do tvojih naprav v Safeer Linku?",
+            "en" to "Allow the computer “{ime}” to access your devices in Safeer Link?",
+            "de" to "Dem Computer „{ime}“ Zugriff auf deine Geräte in Safeer Link erlauben?",
+            "es" to "¿Permitir que el ordenador «{ime}» acceda a tus dispositivos en Safeer Link?",
+            "fr" to "Autoriser l’ordinateur « {ime} » à accéder à tes appareils dans Safeer Link ?",
+            "it" to "Consentire al computer «{ime}» di accedere ai tuoi dispositivi in Safeer Link?"),
+        "dovoli" to mapOf("sl" to "Dovoli", "en" to "Allow", "de" to "Erlauben", "es" to "Permitir", "fr" to "Autoriser", "it" to "Consenti"),
+        "ne" to mapOf("sl" to "Ne", "en" to "No", "de" to "Nein", "es" to "No", "fr" to "Non", "it" to "No"),
+        "uspeh" to mapOf(
+            "sl" to "Računalnik »{ime}« je prijavljen.", "en" to "The computer “{ime}” is signed in.",
+            "de" to "Der Computer „{ime}“ ist angemeldet.", "es" to "El ordenador «{ime}» ha iniciado sesión.",
+            "fr" to "L’ordinateur « {ime} » est connecté.", "it" to "Il computer «{ime}» ha eseguito l’accesso."),
+        "naslovPridruzi" to mapOf("sl" to "Safeer Link", "en" to "Safeer Link", "de" to "Safeer Link",
+            "es" to "Safeer Link", "fr" to "Safeer Link", "it" to "Safeer Link"),
+        "vprasajPridruzi" to mapOf(
+            "sl" to "Povežem to napravo s Safeer Linkom na {naslov}?\nOdtis: {odtis}\n\nPoveži jo samo, če si to kodo pravkar poskeniral na svoji napravi.",
+            "en" to "Connect this device to the Safeer Link at {naslov}?\nFingerprint: {odtis}\n\nOnly connect if you just scanned this code on your own device.",
+            "de" to "Dieses Gerät mit dem Safeer Link unter {naslov} verbinden?\nFingerabdruck: {odtis}\n\nVerbinde es nur, wenn du diesen Code gerade auf deinem eigenen Gerät gescannt hast.",
+            "es" to "¿Conectar este dispositivo al Safeer Link en {naslov}?\nHuella: {odtis}\n\nConéctalo solo si acabas de escanear este código en tu propio dispositivo.",
+            "fr" to "Connecter cet appareil au Safeer Link à l’adresse {naslov} ?\nEmpreinte : {odtis}\n\nNe le connecte que si tu viens de scanner ce code sur ton propre appareil.",
+            "it" to "Collegare questo dispositivo al Safeer Link su {naslov}?\nImpronta: {odtis}\n\nCollegalo solo se hai appena scansionato questo codice sul tuo dispositivo."),
+        "preselitev" to mapOf(
+            "sl" to "Pozor: ta naprava je že v drugem Safeer Linku. Če nadaljuješ, ga zapusti.",
+            "en" to "Warning: this device is already in another Safeer Link. Continuing will leave it.",
+            "de" to "Achtung: Dieses Gerät ist bereits in einem anderen Safeer Link. Wenn du fortfährst, verlässt es diesen.",
+            "es" to "Atención: este dispositivo ya está en otro Safeer Link. Si continúas, lo abandonará.",
+            "fr" to "Attention : cet appareil fait déjà partie d’un autre Safeer Link. Si tu continues, il le quittera.",
+            "it" to "Attenzione: questo dispositivo fa già parte di un altro Safeer Link. Se continui, lo lascerà."),
+        "pridruzi" to mapOf("sl" to "Poveži", "en" to "Connect", "de" to "Verbinden", "es" to "Conectar", "fr" to "Connecter", "it" to "Collega"),
+        "povezujem" to mapOf("sl" to "Povezujem …", "en" to "Connecting …", "de" to "Verbinde …",
+            "es" to "Conectando…", "fr" to "Connexion…", "it" to "Connessione in corso…"),
+        "pridruzena" to mapOf(
+            "sl" to "Povezano. Ta naprava je zdaj v tvojem Safeer Linku.", "en" to "Connected. This device is now in your Safeer Link.",
+            "de" to "Verbunden. Dieses Gerät ist jetzt in deinem Safeer Link.", "es" to "Conectado. Este dispositivo ya está en tu Safeer Link.",
+            "fr" to "Connecté. Cet appareil fait désormais partie de ton Safeer Link.", "it" to "Collegato. Questo dispositivo ora fa parte del tuo Safeer Link."),
+        "zePovezana" to mapOf(
+            "sl" to "Ta naprava je že povezana s tem Safeer Linkom.", "en" to "This device is already connected to this Safeer Link.",
+            "de" to "Dieses Gerät ist bereits mit diesem Safeer Link verbunden.", "es" to "Este dispositivo ya está conectado a este Safeer Link.",
+            "fr" to "Cet appareil est déjà connecté à ce Safeer Link.", "it" to "Questo dispositivo è già collegato a questo Safeer Link."),
+        "neveljavna" to mapOf(
+            "sl" to "Ta koda ni koda za prijavo v Safeer.", "en" to "This is not a Safeer sign-in code.",
+            "de" to "Das ist kein Safeer-Anmeldecode.", "es" to "Este no es un código de inicio de sesión de Safeer.",
+            "fr" to "Ce n’est pas un code de connexion Safeer.", "it" to "Questo non è un codice di accesso Safeer."),
+        "staraKoda" to mapOf(
+            "sl" to "To kodo je pokazala starejša različica Safeerja na računalniku. Posodobi Safeer na računalniku in poskeniraj novo kodo.",
+            "en" to "This code was shown by an older version of Safeer on the computer. Update Safeer on the computer and scan the new code.",
+            "de" to "Dieser Code stammt von einer älteren Safeer-Version auf dem Computer. Aktualisiere Safeer auf dem Computer und scanne den neuen Code.",
+            "es" to "Este código lo mostró una versión antigua de Safeer en el ordenador. Actualiza Safeer en el ordenador y escanea el código nuevo.",
+            "fr" to "Ce code provient d’une ancienne version de Safeer sur l’ordinateur. Mets à jour Safeer sur l’ordinateur, puis scanne le nouveau code.",
+            "it" to "Questo codice proviene da una versione precedente di Safeer sul computer. Aggiorna Safeer sul computer e scansiona il nuovo codice."),
+        "niPovezana" to mapOf(
+            "sl" to "Ta naprava še ni v Safeer Linku. Najprej jo poveži, nato poskeniraj kodo znova.",
+            "en" to "This device is not in Safeer Link yet. Connect it first, then scan the code again.",
+            "de" to "Dieses Gerät ist noch nicht in Safeer Link. Verbinde es zuerst und scanne den Code dann erneut.",
+            "es" to "Este dispositivo aún no está en Safeer Link. Conéctalo primero y luego vuelve a escanear el código.",
+            "fr" to "Cet appareil ne fait pas encore partie de Safeer Link. Connecte-le d’abord, puis scanne à nouveau le code.",
+            "it" to "Questo dispositivo non fa ancora parte di Safeer Link. Collegalo prima, poi scansiona di nuovo il codice."),
+        "niHuba" to mapOf(
+            "sl" to "Safeer Link se ne oglasi. Preveri, da sta napravi v istem domačem omrežju.",
+            "en" to "Safeer Link is not answering. Check that both devices are on the same home network.",
+            "de" to "Safeer Link antwortet nicht. Prüfe, ob beide Geräte im selben Heimnetz sind.",
+            "es" to "Safeer Link no responde. Comprueba que ambos dispositivos estén en la misma red doméstica.",
+            "fr" to "Safeer Link ne répond pas. Vérifie que les deux appareils sont sur le même réseau domestique.",
+            "it" to "Safeer Link non risponde. Verifica che entrambi i dispositivi siano sulla stessa rete domestica."),
+        "drugLink" to mapOf(
+            "sl" to "Ta koda ni za tvoj Safeer Link. Prijave nisem dovolil.",
+            "en" to "This code is not for your Safeer Link. Sign-in was not allowed.",
+            "de" to "Dieser Code ist nicht für deinen Safeer Link. Die Anmeldung wurde nicht erlaubt.",
+            "es" to "Este código no es para tu Safeer Link. No se ha permitido el inicio de sesión.",
+            "fr" to "Ce code n’est pas destiné à ton Safeer Link. La connexion n’a pas été autorisée.",
+            "it" to "Questo codice non è per il tuo Safeer Link. L’accesso non è stato consentito."),
+        "potekla" to mapOf(
+            "sl" to "Koda je potekla. Na računalniku se je pokazala nova – poskeniraj jo.",
+            "en" to "The code has expired. The computer is showing a new one – scan that.",
+            "de" to "Der Code ist abgelaufen. Der Computer zeigt einen neuen an – scanne diesen.",
+            "es" to "El código ha caducado. El ordenador muestra uno nuevo: escanéalo.",
+            "fr" to "Le code a expiré. L’ordinateur en affiche un nouveau – scanne-le.",
+            "it" to "Il codice è scaduto. Il computer ne mostra uno nuovo: scansiona quello."),
+        "poteklaTv" to mapOf(
+            "sl" to "Koda je potekla. Naprava je že pokazala novo – poskeniraj jo.",
+            "en" to "The code has expired. The device is already showing a new one – scan that.",
+            "de" to "Der Code ist abgelaufen. Das Gerät zeigt bereits einen neuen an – scanne diesen.",
+            "es" to "El código ha caducado. El dispositivo ya muestra uno nuevo: escanéalo.",
+            "fr" to "Le code a expiré. L’appareil en affiche déjà un nouveau – scanne-le.",
+            "it" to "Il codice è scaduto. Il dispositivo ne mostra già uno nuovo: scansiona quello."),
+        "prevecNaprav" to mapOf(
+            "sl" to "V Safeer Linku je že preveč naprav. Odstrani katero, ki je ne uporabljaš.",
+            "en" to "Safeer Link already has too many devices. Remove one you no longer use.",
+            "de" to "In Safeer Link sind bereits zu viele Geräte. Entferne eines, das du nicht mehr verwendest.",
+            "es" to "Safeer Link ya tiene demasiados dispositivos. Elimina alguno que ya no uses.",
+            "fr" to "Safeer Link compte déjà trop d’appareils. Retire-en un que tu n’utilises plus.",
+            "it" to "Safeer Link ha già troppi dispositivi. Rimuovine uno che non usi più.")
+    )
 }

@@ -41,5 +41,16 @@ fun main() {
     check(!QrPravila.preselitev(true, o.uppercase(), o)) { "isti Link ni preselitev" }
     check(QrPravila.preselitev(true, o.reversed(), o)) { "drug odtis je preselitev" }
     check(QrPravila.kratekOdtis(o) == "a1b2 c3d4 e5f6 a7b8")
+    // Prijava s QR samo za pripeti Hub (pregled 1. 11. 2026).
+    check(QrPravila.prijavaDovoljena(o, o))
+    check(QrPravila.prijavaDovoljena(o.uppercase(), o))
+    check(!QrPravila.prijavaDovoljena(null, o)) { "brez pripetega odtisa ni prijave" }
+    check(!QrPravila.prijavaDovoljena("", o))
+    check(!QrPravila.prijavaDovoljena(o.reversed(), o)) { "drug Hub" }
+    check(!QrPravila.prijavaDovoljena(o, o.take(16)))
+    check(!QrPravila.prijavaDovoljena(o.take(16), o.take(16)))
+    check(QrPravila.starOdtis(o.take(16)))
+    check(!QrPravila.starOdtis(o))
+    check(!QrPravila.starOdtis(o.take(15)))
     println("QrPravilaTest: OK")
 }

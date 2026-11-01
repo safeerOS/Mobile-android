@@ -159,7 +159,7 @@ class HubTokovi(
     private fun sprejmiZaslon(zahteva: HubStreznik.Zahteva, vhod: InputStream, izhod: OutputStream, vticnica: Socket) {
         val id = zahteva.pot.removePrefix("/cast/screen/").substringBefore('/')
         val z = zasloni[id]
-        if (z == null || !java.security.MessageDigest.isEqual(z.kljuc.toByteArray(Charsets.UTF_8), zahteva.poizvedba["k"]?.toByteArray(Charsets.UTF_8) ?: ByteArray(0))) {
+        if (z == null || zahteva.poizvedba["k"].isNullOrEmpty() || !java.security.MessageDigest.isEqual(z.kljuc.toByteArray(Charsets.UTF_8), zahteva.poizvedba["k"]?.toByteArray(Charsets.UTF_8) ?: ByteArray(0))) {
             odgovori(izhod, 404, "{\"napaka\":\"tega deljenja ni\"}")
             return
         }
@@ -200,7 +200,7 @@ class HubTokovi(
     private fun gledajZaslon(zahteva: HubStreznik.Zahteva, izhod: OutputStream, vticnica: Socket) {
         val id = zahteva.pot.removePrefix("/cast/screen/").substringBefore('/')
         val z = zasloni[id]
-        if (z == null || !java.security.MessageDigest.isEqual(z.kljuc.toByteArray(Charsets.UTF_8), zahteva.poizvedba["k"]?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)) || !z.tece) {
+        if (z == null || zahteva.poizvedba["k"].isNullOrEmpty() || !java.security.MessageDigest.isEqual(z.kljuc.toByteArray(Charsets.UTF_8), zahteva.poizvedba["k"]?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)) || !z.tece) {
             odgovori(izhod, 404, "{\"napaka\":\"tega deljenja ni\"}")
             return
         }
@@ -236,7 +236,7 @@ class HubTokovi(
         val id = zahteva.pot.removePrefix("/cast/screen/").substringBefore('/')
         val z = zasloni[id]
         val kljuc = zahteva.poizvedba["k"] ?: ""
-        if (z == null || !java.security.MessageDigest.isEqual(z.kljuc.toByteArray(Charsets.UTF_8), kljuc.toByteArray(Charsets.UTF_8))) {
+        if (z == null || kljuc.isEmpty() || !java.security.MessageDigest.isEqual(z.kljuc.toByteArray(Charsets.UTF_8), kljuc.toByteArray(Charsets.UTF_8))) {
             odgovori(izhod, 404, STRAN_KONEC, "text/html; charset=utf-8")
             return
         }
@@ -341,7 +341,7 @@ class HubTokovi(
     private fun posljiDatoteko(zahteva: HubStreznik.Zahteva, izhod: OutputStream) {
         val id = zahteva.pot.removePrefix("/cast/file/").substringBefore('/')
         val d = datoteke[id]
-        if (d == null || !java.security.MessageDigest.isEqual(d.kljuc.toByteArray(Charsets.UTF_8), zahteva.poizvedba["k"]?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)) || !d.pot.isFile) {
+        if (d == null || zahteva.poizvedba["k"].isNullOrEmpty() || !java.security.MessageDigest.isEqual(d.kljuc.toByteArray(Charsets.UTF_8), zahteva.poizvedba["k"]?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)) || !d.pot.isFile) {
             odgovori(izhod, 404, "{\"napaka\":\"te datoteke ni\"}")
             return
         }

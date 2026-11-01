@@ -13,6 +13,18 @@ object QrPravila {
     /** Odtis potrdila v kodi: vedno cel SHA-256 (64 malih sestnajstiskih znakov). */
     fun veljavenOdtis(odtis: String): Boolean = ODTIS.matches(odtis)
 
+    private val STAR_ODTIS = Regex("^[0-9a-f]{16}$")
+
+    /** Stara oblika kode (racunalnik pred posodobitvijo): odtis s 16 znaki - uporabniku povemo, naj posodobi Safeer. */
+    fun starOdtis(odtis: String): Boolean = STAR_ODTIS.matches(odtis)
+
+    /**
+     * Prijava s QR (zahteve z x-safeer-token) je dovoljena samo za pripeti Hub te naprave: odtis iz kode se mora v
+     * celoti ujemati s pripetim odtisom (stalni cas). Brez pripetega odtisa ni prijave.
+     */
+    fun prijavaDovoljena(pripeti: String?, izKode: String): Boolean =
+        !pripeti.isNullOrBlank() && odtisUstreza(pripeti, izKode)
+
     /** Videni odtis potrdila se mora z odtisom iz kode ujemati v celoti (primerjava v stalnem casu). */
     fun odtisUstreza(videni: String?, izKode: String): Boolean {
         if (videni == null || !veljavenOdtis(izKode)) return false

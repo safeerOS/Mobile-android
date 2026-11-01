@@ -20,6 +20,8 @@ if [ -z "${TEMP_APK:-}" ]; then
     TEMP_APK="$D/Safeer-Browser.apk"
     TEMP_SHA="$D/Safeer-Browser.SHA256SUMS"
 fi
+# TEMP_SHA nastavimo neodvisno od TEMP_APK (ce TEMP_APK pride iz okolja, TEMP_SHA sicer ne bi bil nastavljen).
+TEMP_SHA="${TEMP_SHA:-$TEMP_APK.SHA256SUMS}"
 
 echo "=========================================================="
 echo "🛡️ SAFEER BROWSER: 1-KLIK NAMESTITEV"
