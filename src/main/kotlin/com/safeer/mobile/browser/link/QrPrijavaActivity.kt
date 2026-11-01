@@ -12,7 +12,6 @@ import org.json.JSONObject
 import com.safeer.mobile.browser.cast.HubKrmilnik
 import com.safeer.mobile.browser.cast.HubPairing
 import com.safeer.mobile.browser.cast.HubTls
-import com.safeer.mobile.browser.cast.KrogNaprave
 import java.net.HttpURLConnection
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
@@ -221,10 +220,8 @@ class QrPrijavaActivity : Activity() {
             if (osnova.isBlank()) return null to null
             val povezava = URL(osnova + pot).openConnection() as HttpURLConnection
             if (povezava !is HttpsURLConnection) return null to null
-            val kljuc = try {
-                HubKrmilnik.izvoljeniHub(this)?.let { KrogNaprave.kljucHuba(this, it.id) }
-            } catch (_: Throwable) { null }
-            val (tovarna, zaupnik) = HubTls.odjemalec(koda.odtis, kljuc)
+            // Mobile-android nima izvoljenega Huba (HubKrmilnik.izvoljeniHub je samo v Android-tv): zaupamo odtisu iz kode.
+            val (tovarna, zaupnik) = HubTls.odjemalec(koda.odtis)
             povezava.sslSocketFactory = tovarna
             povezava.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
             try {
