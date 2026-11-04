@@ -45,3 +45,6 @@ tests/.astra/
 .settings/
 .android-sdk
 
+
+# Krajevne vsote build_mobile_apk.sh (stara imena Safeer-Browser.apk); izdaja ima svoje SHA256SUMS (tedenski pregled 4. 11. 2026, N11).
+/SHA256SUMS
