@@ -1,7 +1,7 @@
 /*
  * Safeer signed threat feed client for Android and Android TV (pure JVM, no Android imports).
  *
- * Normative format: docs/THREAT_FEED_FORMAT.md in https://github.com/memelandfaner/safeer-threat-intel
+ * Normative format: docs/THREAT_FEED_FORMAT.md in the Safeer team repository safeer-threat-intel
  * The same file is used unchanged by Safeer Browser for Android and Safeer Browser for Android TV;
  * compare SHA-256 sums before editing a copy.
  *

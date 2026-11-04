@@ -10,7 +10,7 @@ import java.io.File
 /**
  * 🛡️ Safeer Threat Intelligence
  * Dodatna plast zaščite: preverjen, z Ed25519 podpisan seznam nevarnih strani, ki ga objavlja
- * https://github.com/memelandfaner/safeer-threat-intel. Brskalnik prenese le dve javni datoteki
+ * projekt Safeer Threat Intelligence (repozitorij safeer-threat-intel ekipe Safeer). Brskalnik prenese le dve javni datoteki
  * (anonimen GET, brez piškotkov in identifikatorjev); vse preverjanje poteka na napravi. Ob vsaki
  * napaki ostane v uporabi zadnji preverjen seznam, vgrajena zaščita pa deluje tudi brez njega.
  */
