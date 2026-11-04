@@ -250,8 +250,9 @@ class ChromiumEngineView @JvmOverloads constructor(
             if (target.isEmpty()) return
             val runner = Runnable {
                 val cur = webView.url ?: ""
-                val isLocal = cur.startsWith("file:///android_asset/") || cur.startsWith("safeer://") || cur.isEmpty()
-                if (!isLocal) {
+                // N17 (tedenski pregled 4. 11. 2026): samo domaca stran brskalnika, ista vrata kot TV - prazen naslov,
+                // about:blank in druge strani iz aplikacije ne.
+                if (!SpletVarnostPravila.jeDomacaBrskalnika(cur)) {
                     android.util.Log.w("SafeerBridge", "Zavrnjen neavtoriziran klic navigate() iz zunanje strani: $cur")
                     return@Runnable
                 }

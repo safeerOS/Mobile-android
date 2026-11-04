@@ -9,6 +9,19 @@ package com.safeer.mobile.browser
  * preverbe sheme - javascript: v rezervi je tekel v izvoru trenutne strani (UXSS).
  */
 object SpletVarnostPravila {
+    /** Domaca stran brskalnika; most SafeerBridge sme premikati brskalnik samo njej. */
+    const val DOMACA_BRSKALNIKA = "file:///android_asset/brave_home.html"
+
+    /**
+     * Natanko domaca stran brskalnika (poizvedba in sidro smeta biti). Prazen naslov, about:blank, safeer:// in druge
+     * strani iz aplikacije ne (tedenski pregled 4. 11. 2026, N17: navigate() je prej sprejel tudi prazen naslov - pogled
+     * pred prvo stranjo ali okvir about:blank - in vsako file:///android_asset/ ali safeer:// stran).
+     */
+    fun jeDomacaBrskalnika(url: String?): Boolean {
+        val cist = url?.substringBefore('#')?.substringBefore('?') ?: return false
+        return cist == DOMACA_BRSKALNIKA
+    }
+
     /** Zunanjo aplikacijo sme stran odpreti samo tako dolgo po uporabnikovem dotiku (ali s kretnjo). */
     const val ZAGON_PO_DEJANJU_MS = 3000L
 

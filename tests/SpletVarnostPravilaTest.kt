@@ -36,5 +36,13 @@ fun main() {
     d.oznaci(1000); check(d.msOd(1500) == 500L)
     d.porabi(); check(d.msOd(1600) == Long.MAX_VALUE) { "porabljeno dejanje ne velja vec" }
     d.oznaci(2000); check(d.msOd(2100) == 100L) { "novo dejanje spet velja" }
+    // N17: SafeerBridge.navigate samo z domace strani brskalnika (kot TV).
+    check(P.jeDomacaBrskalnika("file:///android_asset/brave_home.html"))
+    check(P.jeDomacaBrskalnika("file:///android_asset/brave_home.html?x=1#y"))
+    for (u in listOf(null, "", "about:blank", "safeer://security-interstitial", "file:///android_asset/link/index.html",
+                     "file:///android_asset/brave_home.html.evil", "https://napadalec.test/file:///android_asset/brave_home.html",
+                     "file:///android_asset/../android_asset/brave_home.html", "data:text/html,brave_home")) {
+        check(!P.jeDomacaBrskalnika(u)) { "domaca $u" }
+    }
     println("SpletVarnostPravilaTest: OK")
 }
