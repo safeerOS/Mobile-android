@@ -170,6 +170,18 @@ fun main() {
             check(e.message == "only HTTPS is allowed")
         }
     }
+    test("first load is reported also when nothing is saved (first start after install: no endless wait)") {
+        val empty = Files.createTempDirectory("safeer-lists-empty").toFile()
+        val done = CountDownLatch(1)
+        var listsCalls = 0
+        val a = ThreatListAgent(empty, sources(server), HttpsListFetcher(allowPlainHttpForTests = true), startDelayMs = 60_000,
+            onFirstLoad = { done.countDown() }) { listsCalls++ }
+        a.start()
+        check(done.await(2, TimeUnit.SECONDS)) { "first load not reported" }
+        check(listsCalls == 0) { "no saved lists, no listener call" }
+        a.stop()
+        empty.deleteRecursively()
+    }
     test("first start: returns at once, downloads after the delay and saves the lists") {
         server.delayMs = 1500
         val delivered = CountDownLatch(1)
@@ -275,6 +287,41 @@ fun main() {
         check(!a.isRefreshing)
         statusDir.deleteRecursively()
     }
+    test("partial first load reads only the requested lists; the others keep their metadata and come back on a change (4. 11. 2026)") {
+        val partial = java.util.concurrent.atomic.AtomicReference<List<PlainList>?>(null)
+        val full = java.util.concurrent.atomic.AtomicReference<List<PlainList>?>(null)
+        val first = CountDownLatch(1)
+        val a = ThreatListAgent(
+            dir, sources(server), HttpsListFetcher(allowPlainHttpForTests = true), startDelayMs = 60_000, minCheckIntervalSeconds = 0,
+            onFirstLoad = { first.countDown() }, onPartialLists = { partial.set(it) }, firstLoadPriority = Thread.NORM_PRIORITY,
+            onLists = { full.set(it) },
+        )
+        val info = a.savedInfo()
+        check(info.map { it.source.id } == listOf("urlhaus", "phishing-army") && info.all { it.sha256.length == 64 && it.count > 0 }) { "metadata" }
+        a.start(setOf("phishing-army"))
+        check(first.await(5, TimeUnit.SECONDS)) { "first load not reported" }
+        check(partial.get()?.map { it.source.id } == listOf("phishing-army") && partial.get()!![0].entries.size == 25) { "only the requested list is read" }
+        check(full.get() == null) { "no full delivery on a partial first load" }
+        check(a.lists.map { it.source.id } == listOf("urlhaus", "phishing-army") && a.lists.map { it.sha256 } == info.map { it.sha256 }) {
+            "lists in use include the unread one"
+        }
+        server.hosts = FakeLists.hostsFile("evil-one.example", "partial-new.example")
+        val updated = CountDownLatch(1)
+        var changed = -1
+        check(a.requestUpdate { changed = it; updated.countDown() })
+        check(updated.await(10, TimeUnit.SECONDS))
+        val all = full.get()
+        check(changed == 1) { "changed=$changed error=${a.lastError}" }
+        check(all != null && all.map { it.source.id } == listOf("urlhaus", "phishing-army") && all[0].entries.contains("partial-new.example") &&
+            all[1].entries.size == 25) { "a change delivers every list (the unread one from disk): ${all?.map { it.entries.size }}" }
+        full.set(null)
+        check(a.reloadSaved())
+        val t = System.currentTimeMillis()
+        while (full.get() == null && System.currentTimeMillis() - t < 5_000) Thread.sleep(20)
+        check(full.get()?.size == 2) { "reloadSaved delivers every saved list" }
+        a.stop()
+    }
+
     test("server offline keeps every list") {
         server.stop()
         val a = agent(dir, server)

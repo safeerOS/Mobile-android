@@ -31,9 +31,14 @@ java -jar "$TEST_OUTPUT/prijavna-okna.jar"
 "$KOTLINC" "$SOURCE_DIR/LocalDnsProxy.kt" "$TEST_DIR/LocalDnsProxyTest.kt" -include-runtime -d "$TEST_OUTPUT/proxy.jar"
 java -jar "$TEST_OUTPUT/proxy.jar"
 FEED_DIR="$PROJECT_DIR/src/main/kotlin/com/safeer/threatfeed"
-"$KOTLINC" -cp "$PROJECT_DIR/libs/bcprov-ed25519-1.78.1.jar" "$TEST_DIR"/stubs/*.kt "$SOURCE_DIR/DomainSuffixTrie.kt" "$SOURCE_DIR/ThreatBlockEngine.kt" "$SOURCE_DIR/AdBlockEngine.kt" "$SOURCE_DIR/SignedThreatIntel.kt" "$FEED_DIR/SignedThreatFeed.kt" "$FEED_DIR/BankGuard.kt" "$FEED_DIR/BankGuardData.kt" "$FEED_DIR/ThreatListAgent.kt" "$FEED_DIR/FilterListEngine.kt" "$TEST_DIR/ThreatPolicyTest.kt" -include-runtime -d "$TEST_OUTPUT/threat.jar"
+"$KOTLINC" -cp "$PROJECT_DIR/libs/bcprov-ed25519-1.78.1.jar" "$TEST_DIR"/stubs/*.kt "$SOURCE_DIR/DomainSuffixTrie.kt" "$SOURCE_DIR/ThreatBlockEngine.kt" "$SOURCE_DIR/ZascitaZagona.kt" "$SOURCE_DIR/AdBlockEngine.kt" "$SOURCE_DIR/SignedThreatIntel.kt" "$FEED_DIR/SignedThreatFeed.kt" "$FEED_DIR/SortedStringTable.kt" "$FEED_DIR/BankGuard.kt" "$FEED_DIR/BankGuardData.kt" "$FEED_DIR/ThreatListAgent.kt" "$FEED_DIR/FilterListEngine.kt" "$TEST_DIR/ThreatPolicyTest.kt" "$TEST_DIR/ZascitaZagonaTest.kt" -include-runtime -d "$TEST_OUTPUT/threat.jar"
 java -cp "$TEST_OUTPUT/threat.jar:$PROJECT_DIR/libs/bcprov-ed25519-1.78.1.jar" com.safeer.mobile.browser.ThreatPolicyTestKt
-"$KOTLINC" -cp "$PROJECT_DIR/libs/bcprov-ed25519-1.78.1.jar" "$PROJECT_DIR/src/main/kotlin/com/safeer/threatfeed/SignedThreatFeed.kt" "$TEST_DIR/SignedThreatFeedTest.kt" -include-runtime -d "$TEST_OUTPUT/signed-feed.jar"
+# Zascita od prve zahteve hladnega zagona (prenos s TV 4. 11. 2026): svoj JVM, ker je stanje zapaha enkratno na proces.
+java -cp "$TEST_OUTPUT/threat.jar:$PROJECT_DIR/libs/bcprov-ed25519-1.78.1.jar" com.safeer.mobile.browser.ZascitaZagonaTestKt
+# Drevo grozenj iz kazala (mmap) odloca natanko kot drevo v kopici (300 000 domen).
+"$KOTLINC" "$SOURCE_DIR/DomainSuffixTrie.kt" "$FEED_DIR/SortedStringTable.kt" "$TEST_DIR/DrevoKazaloTest.kt" -include-runtime -d "$TEST_OUTPUT/drevo-kazalo.jar"
+java -Xmx1g -cp "$TEST_OUTPUT/drevo-kazalo.jar" com.safeer.mobile.browser.DrevoKazaloTestKt
+"$KOTLINC" -cp "$PROJECT_DIR/libs/bcprov-ed25519-1.78.1.jar" "$PROJECT_DIR/src/main/kotlin/com/safeer/threatfeed/SignedThreatFeed.kt" "$FEED_DIR/SortedStringTable.kt" "$TEST_DIR/SignedThreatFeedTest.kt" -include-runtime -d "$TEST_OUTPUT/signed-feed.jar"
 java -cp "$TEST_OUTPUT/signed-feed.jar:$PROJECT_DIR/libs/bcprov-ed25519-1.78.1.jar" com.safeer.threatfeed.SignedThreatFeedTestKt "$TEST_DIR/signed-feed-conformance"
 "$KOTLINC" "$FEED_DIR/BankGuard.kt" "$FEED_DIR/BankGuardData.kt" "$TEST_DIR/BankGuardTest.kt" -include-runtime -d "$TEST_OUTPUT/bank-guard.jar"
 java -cp "$TEST_OUTPUT/bank-guard.jar" com.safeer.threatfeed.BankGuardTestKt "$TEST_DIR/bank-guard-cases.json"
