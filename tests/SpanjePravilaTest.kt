@@ -1,8 +1,8 @@
 package com.safeer.mobile.browser
 
 /**
- * Roki spanja zavihkov (lastnik 4. 11. 2026): zavihek v ozadju po 60 s, vse po 30 s, ko aplikacija ni na
- * zaslonu; zvok, video, nedokoncan obrazec, prijava in nalaganje nikoli. S starimi roki (10 min, aktivni
+ * Roki spanja zavihkov (lastnik 4. 11. 2026): zavihek v ozadju po 60 s, vse po 3 min, ko aplikacija ni na
+ * zaslonu (2FA v drugi aplikaciji); zvok, video, nedokoncan obrazec, prijava in nalaganje nikoli. S starimi roki (10 min, aktivni
  * nikoli) preizkus pade.
  */
 
@@ -22,7 +22,7 @@ private fun brezIzjem() = SpanjePravila.izjema(predvaja = false, celozaslonskiVi
 fun main() {
     val s = SpanjePravila
     preveri(s.ZAVIHEK_V_OZADJU_MS, 60_000L, "rok zavihka v ozadju")
-    preveri(s.APLIKACIJA_V_OZADJU_MS, 30_000L, "rok aplikacije v ozadju")
+    preveri(s.APLIKACIJA_V_OZADJU_MS, 180_000L, "rok aplikacije v ozadju (2FA)")
 
     // Aplikacija na zaslonu, zavihek v ozadju
     preveri(s.zaspi(false, 59_999L, null, false, brezIzjem()), false, "vrnitev v prvi minuti ohrani stran")
@@ -34,12 +34,15 @@ fun main() {
     preveri(s.zaspi(true, 3_600_000L, null, true, brezIzjem()), false, "aktivni na zaslonu ob pritisku")
     preveri(s.preostanek(true, 3_600_000L, null), null, "aktivni na zaslonu nima roka")
 
-    // Aplikacija ni na zaslonu: vse zaspi po 30 s
-    preveri(s.zaspi(true, 0L, 29_999L, false, brezIzjem()), false, "kratek skok v drugo aplikacijo")
-    preveri(s.zaspi(true, 0L, 30_000L, false, brezIzjem()), true, "aktivni zaspi 30 s po odhodu")
-    preveri(s.zaspi(false, 10_000L, 30_000L, false, brezIzjem()), true, "zavihek v ozadju zaspi 30 s po odhodu")
+    // Aplikacija ni na zaslonu: aktivni zaspi po 3 min (2FA v drugi aplikaciji), v ozadju ostane 60 s
+    preveri(s.zaspi(true, 0L, 30_000L, false, brezIzjem()), false, "2FA: aktivni po 30 s se zivi")
+    preveri(s.zaspi(true, 0L, 120_000L, false, brezIzjem()), false, "2FA: vrnitev po 2 min ohrani stran")
+    preveri(s.zaspi(true, 0L, 179_000L, false, brezIzjem()), false, "aktivni pri 179 s se zivi")
+    preveri(s.zaspi(true, 0L, 180_000L, false, brezIzjem()), true, "aktivni zaspi 180 s po odhodu")
+    preveri(s.zaspi(false, 10_000L, 60_000L, false, brezIzjem()), false, "zavihek v ozadju: steje njegov rok 60 s")
+    preveri(s.zaspi(false, 60_000L, 30_000L, false, brezIzjem()), true, "zavihek v ozadju zaspi po 60 s tudi brez zaslona")
     preveri(s.preostanek(false, 50_000L, 5_000L), 10_000L, "velja prej dosezeni rok")
-    preveri(s.preostanek(true, 0L, 12_000L), 18_000L, "preostanek aktivnega v ozadju")
+    preveri(s.preostanek(true, 0L, 12_000L), 168_000L, "preostanek aktivnega v ozadju")
     preveri(s.zaspi(true, 0L, 1_000L, true, brezIzjem()), true, "ob pritisku v ozadju takoj")
 
     // Izjeme: nikoli ne zaspi

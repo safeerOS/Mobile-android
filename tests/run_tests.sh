@@ -28,7 +28,7 @@ java -jar "$TEST_OUTPUT/qr-pravila.jar"
 java -jar "$TEST_OUTPUT/login.jar"
 "$KOTLINC" "$SOURCE_DIR/PrijavnaOkna.kt" "$TEST_DIR/PrijavnaOknaTest.kt" -include-runtime -d "$TEST_OUTPUT/prijavna-okna.jar"
 java -jar "$TEST_OUTPUT/prijavna-okna.jar"
-# Spanje zavihkov (lastnik 4. 11. 2026): 60 s v ozadju, 30 s ko aplikacija ni na zaslonu; brez largeHeap.
+# Spanje zavihkov (lastnik 4. 11. 2026): 60 s v ozadju, 3 min ko aplikacija ni na zaslonu (2FA); brez largeHeap.
 "$KOTLINC" "$SOURCE_DIR/SpanjePravila.kt" "$TEST_DIR/SpanjePravilaTest.kt" -include-runtime -d "$TEST_OUTPUT/spanje.jar"
 java -cp "$TEST_OUTPUT/spanje.jar" com.safeer.mobile.browser.SpanjePravilaTestKt
 if grep -q 'largeHeap' "$PROJECT_DIR/AndroidManifest.xml"; then echo "FAIL AndroidManifest.xml: largeHeap mora biti izklopljen"; exit 1; fi

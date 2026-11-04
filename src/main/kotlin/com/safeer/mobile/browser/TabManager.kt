@@ -73,7 +73,7 @@ class TabManager(
         handler.postDelayed(sleepTask, zamik)
     }
 
-    /** Aplikacija ni vec na zaslonu (onStop): cez 30 s zaspi vse, kar ne predvaja in nima vnosa. */
+    /** Aplikacija ni vec na zaslonu (onStop): cez 3 min (2FA v drugi aplikaciji) zaspi tudi aktivni, ce ne predvaja in nima vnosa. */
     fun naOdhod() {
         odsotnaOd = SystemClock.elapsedRealtime()
         naPregled(SpanjePravila.APLIKACIJA_V_OZADJU_MS)
@@ -252,7 +252,7 @@ class TabManager(
     }
 
     /**
-     * Uspava zavihke po SpanjePravila: v ozadju po 60 s, vse 30 s po odhodu aplikacije z zaslona. Glasba, video,
+     * Uspava zavihke po SpanjePravila: v ozadju po 60 s, aktivni 3 min po odhodu aplikacije z zaslona. Glasba, video,
      * nedokoncan obrazec, prijava in nalaganje ostanejo budni; saveState ohrani zgodovino Nazaj in polozaj.
      */
     fun suspendInactiveTabs(memoryPressure: Boolean = false) {

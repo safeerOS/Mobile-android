@@ -394,7 +394,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
     override fun onStop() {
         if (::tabManager.isInitialized) {
             tabManager.saveSession()
-            // Ni na zaslonu (ne le onPause zaradi pogovornega okna): cez 30 s zaspi vse, kar ne predvaja.
+            // Ni na zaslonu (ne le onPause zaradi pogovornega okna): cez 3 min zaspi tudi aktivni zavihek, ce ne predvaja (ob onTrimMemory takoj).
             tabManager.naOdhod()
         }
         super.onStop()

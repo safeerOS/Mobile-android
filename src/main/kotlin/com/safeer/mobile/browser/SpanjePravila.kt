@@ -6,13 +6,17 @@ package com.safeer.mobile.browser
  *
  * Nacelo lastnika (4. 11. 2026): zivi samo zavihek, ki ga gledas; ostalo zaspi. Prej je zavihek v ozadju
  * ostal buden 10 minut, ko aplikacija ni bila na zaslonu, pa aktivni zavihek ni zaspal nikoli.
- * Vzorec je TV (si.safeer.tv.SpanjePravila): pol minute po odhodu z zaslona.
+ * Vzorec je TV (si.safeer.tv.SpanjePravila); telefon ima daljsi rok za odhod z zaslona (2FA, glej spodaj).
  */
 object SpanjePravila {
     /** Zavihek v ozadju: preklop nazaj v prvi minuti stran ohrani brez ponovnega nalaganja. */
     const val ZAVIHEK_V_OZADJU_MS = 60_000L
-    /** Aplikacija ni na zaslonu: kratek skok v drugo aplikacijo (sporocilo, kamera) ne nalozi strani znova. */
-    const val APLIKACIJA_V_OZADJU_MS = 30_000L
+    /**
+     * Aplikacija ni na zaslonu. Lastnik 4. 11. 2026: za 2FA uporabnik pogosto odide v drugo aplikacijo (mobilna
+     * banka, SMS, avtentikator) in se vrne po 1-2 min; s 30 s (kot TV) bi stran zaspala, se nalozila znova in
+     * prijava bi se izgubila. Zato 3 min; ob pomnilniskem pritisku (onTrimMemory) zaspi takoj.
+     */
+    const val APLIKACIJA_V_OZADJU_MS = 180_000L
     /** Zavihek, ki ga izjema (zvok, obrazec ...) drzi budnega, pogledamo znova cez toliko. */
     const val PONOVNI_PREGLED_MS = 30_000L
 

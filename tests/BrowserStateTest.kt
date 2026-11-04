@@ -40,7 +40,7 @@ fun main() {
     check(first.loadedWebView == null && firstView.destroyed)
     manager.switchTab(first.id)
     check(first.webView !== firstView && first.webView.url == first.url)
-    // Lastnik 4. 11. 2026: zavihek v ozadju zaspi po 60 s, ko aplikacije ni na zaslonu, vse po 30 s.
+    // Lastnik 4. 11. 2026: zavihek v ozadju zaspi po 60 s, aktivni 3 min po odhodu aplikacije (2FA).
     manager.switchTab(second.id)
     val firstLive = first.loadedWebView!!
     SystemClock.time += 59_000
@@ -51,9 +51,9 @@ fun main() {
     check(first.loadedWebView == null && firstLive.destroyed) { "zavihek v ozadju ni zaspal po 60 s" }
     val secondView = second.loadedWebView!!
     manager.naOdhod()
-    SystemClock.time += 29_000
+    SystemClock.time += 179_000
     manager.suspendInactiveTabs()
-    check(second.loadedWebView === secondView) { "aktivni zaspal pred 30 s" }
+    check(second.loadedWebView === secondView) { "aktivni zaspal pred 180 s (2FA v drugi aplikaciji)" }
     secondView.isPlayingAudio = true
     SystemClock.time += 60_000
     manager.suspendInactiveTabs()
@@ -64,7 +64,7 @@ fun main() {
     check(second.loadedWebView === secondView) { "nedokoncan obrazec v ozadju je umrl" }
     secondView.hasEditedForm = false
     manager.suspendInactiveTabs()
-    check(second.loadedWebView == null && secondView.destroyed && container.children.isEmpty()) { "aktivni ni zaspal 30 s po odhodu" }
+    check(second.loadedWebView == null && secondView.destroyed && container.children.isEmpty()) { "aktivni ni zaspal 180 s po odhodu" }
     manager.naPrihod()
     check(second.loadedWebView != null && second.loadedWebView !== secondView && second.webView.url == second.url &&
         container.children.single() === second.webView) { "aktivni se ob vrnitvi ni zbudil s svojim naslovom" }
