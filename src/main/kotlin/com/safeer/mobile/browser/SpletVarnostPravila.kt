@@ -53,6 +53,79 @@ object SpletVarnostPravila {
         }
     }
 
+    /** Od kod je prisel naslov, ki ga brskalnik nalozi v zavihek (namera druge aplikacije ali sporocilo druge naprave). */
+    enum class Vhod { NAMERA, LINK, SPLET }
+
+    /** Najdaljsi naslov od zunaj (WebView ga sicer sprejme do 2 MB; tako dolg naslov ni povezava). */
+    const val NAJDALJSI_VHODNI = 8192
+
+    /**
+     * Vhodna vrata brskalnika (prenos s TV si.safeer.tv.SpletVarnostPravila, 4. 11. 2026, UXSS): MainActivity je
+     * izvozena, zato je tuja aplikacija z namero VIEW (dataString) lahko podtaknila javascript: ali data:, Safeer Link pa
+     * v cast.url ali share.screen poljuben naslov. Vsak zunanji naslov gre skozi to eno preverbo:
+     * - vedno: http(s) z gostiteljem;
+     * - NAMERA: se krajevni PDF za nas pregledovalnik (content:// tuje avtoritete, nas ponudnik samo s podeljenim
+     *   branjem; file://...pdf izven assets in izven zasebnih map /data/);
+     * - LINK: se natanko nasa domaca stran (Daljinec open_url »home«);
+     * - SPLET (deljeno besedilo, ki je povezava): samo http(s).
+     * Nikoli javascript:, vbscript:, data:, blob:, intent:, about:. Kontrolni znaki in presledki kjerkoli so zavrnjeni:
+     * Chromium iz naslova odstrani tabulator in novo vrstico (»java\tscript:«).
+     */
+    fun vhodniNaslov(url: String?, vhod: Vhod, dovoljenjeBranja: Boolean = false): Boolean {
+        if (url.isNullOrEmpty() || url.length > NAJDALJSI_VHODNI) return false
+        if (url.any { it <= ' ' || it == '\u007f' }) return false
+        val shema = url.substringBefore(':', "").lowercase()
+        if ((shema == "http" || shema == "https") && url.length > shema.length + 3) {
+            val ostanek = url.substring(shema.length + 1).replace('\\', '/')
+            if (!ostanek.startsWith("//")) return false
+            val gostitelj = ostanek.substring(2).substringBefore('/').substringBefore('?').substringBefore('#').substringAfterLast('@')
+            return gostitelj.isNotEmpty() && !gostitelj.startsWith(":")
+        }
+        return when (vhod) {
+            Vhod.NAMERA -> jeKrajevniPdf(url) && (!url.startsWith("content://") || dovoljenjeBranja || !lastnaAvtoriteta(url))
+            Vhod.LINK -> jeDomacaBrskalnika(url)
+            Vhod.SPLET -> false
+        }
+    }
+
+    /**
+     * Zadnja vrata v ChromiumEngineView.loadUrl (kot TV, 4. 11. 2026): nasa koda z loadUrl nikoli ne nalozi skripte ali
+     * dokumenta data: (preverjeno z grep; svoje strani nalagamo z loadDataWithBaseURL), zato je tak naslov vedno
+     * podtaknjen. Shemo beremo kot Chromium: brez vodilnih presledkov in kontrolnih znakov, brez tabulatorjev in vrstic.
+     */
+    fun skriptniNaslov(url: String?): Boolean {
+        if (url == null) return false
+        val cist = url.trimStart { it <= ' ' }.filterNot { it == '\t' || it == '\n' || it == '\r' }
+        val shema = cist.substringBefore(':', "").lowercase()
+        return shema == "javascript" || shema == "vbscript" || shema == "data"
+    }
+
+    /**
+     * content:// nase druzine (com.safeer.*, si.safeer.*): tuja aplikacija bi z namero VIEW odprla NAS ponudnik
+     * (com.safeer.mobile.browser.fileprovider) z nasimi pravicami. Velja samo s FLAG_GRANT_READ_URI_PERMISSION, ki ga
+     * Android ne dovoli aplikaciji brez dostopa do ponudnika. Avtoriteta brez »uporabnik@« in vrat; %-kodirana je nasa.
+     */
+    fun lastnaAvtoriteta(url: String): Boolean {
+        val a = url.removePrefix("content://").substringBefore('/').substringBefore('?').substringBefore('#')
+            .substringAfterLast('@').substringBefore(':').lowercase()
+        return a == "com.safeer" || a.startsWith("com.safeer.") || a == "si.safeer" || a.startsWith("si.safeer.") || '%' in a
+    }
+
+    /**
+     * Enako kot PdfPregledovalnik.jeLokalni (content:// ali file://...pdf, nikoli nase strani v assets), od zunaj pa
+     * file:// tudi nikoli v zasebne mape aplikacij (/data/...) ali s skritimi poti (/../, %2e, %2f).
+     */
+    private fun jeKrajevniPdf(url: String): Boolean {
+        if (url.startsWith("content://")) return url.length > "content://".length
+        if (!url.startsWith("file://") || url.startsWith("file:///android_asset/")) return false
+        // Vec posevnic (file:////data/...) je ista pot kot ena.
+        val pot = url.removePrefix("file://").substringBefore('?').substringBefore('#').replace(Regex("/{2,}"), "/")
+        val mala = pot.lowercase()
+        if ("/../" in pot || pot.endsWith("/..") || "/./" in pot || "%2e" in mala || "%2f" in mala || "%5c" in mala || '\\' in pot) return false
+        if (!pot.startsWith("/") || mala.startsWith("/data/") || mala.startsWith("/proc/")) return false
+        return mala.endsWith(".pdf")
+    }
+
     /** Oglas ob nalaganju strani ne sme sam odpreti druge aplikacije: potrebna je kretnja ali nedaven dotik. */
     fun dovoljenZunanjiZagon(kretnja: Boolean, msOdDejanja: Long): Boolean =
         kretnja || msOdDejanja in 0..ZAGON_PO_DEJANJU_MS

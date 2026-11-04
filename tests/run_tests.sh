@@ -16,6 +16,8 @@ trap 'rm -rf "$TEST_OUTPUT"' EXIT
 java -jar "$TEST_OUTPUT/pdf-preusmeritve.jar"
 "$KOTLINC" "$SOURCE_DIR/SpletVarnostPravila.kt" "$TEST_DIR/SpletVarnostPravilaTest.kt" -include-runtime -d "$TEST_OUTPUT/splet-varnost.jar"
 java -jar "$TEST_OUTPUT/splet-varnost.jar"
+# Vhodna vrata (UXSS, 4. 11. 2026 kot TV): vsi vhodi od zunaj gredo skozi SpletVarnostPravila.vhodniNaslov.
+python3 "$TEST_DIR/preveri_vhode_brskalnika.py"
 bash "$TEST_DIR/run_install_tests.sh"
 "$KOTLINC" "$SOURCE_DIR/PonudnikPravila.kt" "$TEST_DIR/PonudnikPravilaTest.kt" -include-runtime -d "$TEST_OUTPUT/ponudnik.jar"
 java -jar "$TEST_OUTPUT/ponudnik.jar"

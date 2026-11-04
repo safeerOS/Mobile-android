@@ -303,6 +303,8 @@ class ChromiumEngineView @JvmOverloads constructor(
     }
 
     override fun loadUrl(url: String) {
+        // Zadnja vrata (UXSS, 4. 11. 2026 kot TV): javascript:/data: z loadUrl bi tekel v izvoru odprte strani.
+        if (SpletVarnostPravila.skriptniNaslov(url)) return
         failedNavigationUrl = null
         if (PdfPregledovalnik.jeLokalni(url)) {
             // PDF z naprave: ne nalaga ga WebView (content:// mu ni dovoljen), ampak nas pregledovalnik.
@@ -318,6 +320,7 @@ class ChromiumEngineView @JvmOverloads constructor(
     }
 
     override fun loadUrl(url: String, additionalHttpHeaders: Map<String, String>) {
+        if (SpletVarnostPravila.skriptniNaslov(url)) return
         failedNavigationUrl = null
         if (PdfPregledovalnik.jeLokalni(url)) {
             // PDF z naprave: ne nalaga ga WebView (content:// mu ni dovoljen), ampak nas pregledovalnik.

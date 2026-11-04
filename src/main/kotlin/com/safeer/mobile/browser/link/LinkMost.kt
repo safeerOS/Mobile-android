@@ -718,7 +718,7 @@ class LinkMost(
                 "cast.url" -> {
                     // Stran s televizorja (ali druge naprave): odpremo jo v brskalniku.
                     val url = tovor.optString("url", "").trim()
-                    if (url.startsWith("http://") || url.startsWith("https://")) {
+                    if (com.safeer.mobile.browser.SpletVarnostPravila.vhodniNaslov(url, com.safeer.mobile.browser.SpletVarnostPravila.Vhod.SPLET)) {
                         odziv("prejeto", JSONObject().put("vrsta", "stran").put("od", od).put("url", url).put("naslov", tovor.optString("title", "")))
                         dejavnost.runOnUiThread { zapriZaslon(); odpriVBrskalniku(url) }
                     }
@@ -733,7 +733,9 @@ class LinkMost(
                     if (dejanje == "start") {
                         val pot = tovor.optString("path", "")
                         val url = if (pot.startsWith("/")) hubHttp() + pot else tovor.optString("url", "")
-                        if (url.isNotBlank()) dejavnost.runOnUiThread { zapriZaslon(); odpriVBrskalniku(url) }
+                        // Naslov je izbrala druga naprava: samo http(s) (UXSS, 4. 11. 2026 kot TV share.screen).
+                        if (com.safeer.mobile.browser.SpletVarnostPravila.vhodniNaslov(url, com.safeer.mobile.browser.SpletVarnostPravila.Vhod.SPLET))
+                            dejavnost.runOnUiThread { zapriZaslon(); odpriVBrskalniku(url) }
                     }
                     odziv("prejeto", JSONObject().put("vrsta", "zaslon").put("od", od).put("dejanje", dejanje))
                 }

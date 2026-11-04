@@ -188,7 +188,10 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                         startActivity(Intent(this, com.safeer.mobile.browser.link.QrPrijavaActivity::class.java).setData(intent.data))
                         return
                     }
-                    targetUrl = intent.dataString
+                    // Izvozena dejavnost (UXSS, 4. 11. 2026 kot TV): samo http(s) ali krajevni PDF; nas ponudnik
+                    // content:// samo s podeljenim branjem.
+                    val branje = (intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0
+                    targetUrl = varenVhod(intent.dataString, SpletVarnostPravila.Vhod.NAMERA, branje)
                 }
                 Intent.ACTION_WEB_SEARCH -> {
                     val query = intent.getStringExtra(android.app.SearchManager.QUERY)
@@ -202,7 +205,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                         val shared = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim() ?: ""
                         if (shared.isNotBlank()) {
                             targetUrl = if (shared.startsWith("http://") || shared.startsWith("https://")) {
-                                shared
+                                varenVhod(shared, SpletVarnostPravila.Vhod.SPLET)
                             } else {
                                 PreferencesManager.buildSearchUrl(this, shared)
                             }
@@ -361,7 +364,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         com.safeer.mobile.browser.cast.HubKrmilnik.naPrijavoZaZaslon = { runOnUiThread { pokaziKodoZaSeznanitev() } }
         pokaziKodoZaSeznanitev()
         // Sprejem prek Safeer Linka, ko je brskalnik v ospredju: stran v zavihek, besedilo v okno.
-        com.safeer.mobile.browser.link.LinkSprejemnik.naStran = { url -> runOnUiThread { openUrlInBrowser(url) } }
+        com.safeer.mobile.browser.link.LinkSprejemnik.naStran = { url -> runOnUiThread { odpriOdZunaj(url) } }
         com.safeer.mobile.browser.link.LinkSprejemnik.naBesedilo = { od, b -> runOnUiThread { pokaziPrejetoBesedilo(od, b) } }
         com.safeer.mobile.browser.link.LinkSprejemnik.naUkaz = this
         // Ce je uporabnik Safeer Link pustil prizgan oz. je telefon seznanjen, naj to velja tudi po ponovnem zagonu.
@@ -501,6 +504,19 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         val b64 = android.util.Base64.encodeToString(izhod.toByteArray(), android.util.Base64.NO_WRAP)
         return com.safeer.mobile.browser.link.Daljinec.Izid(true, "Posnetek zaslona",
             org.json.JSONObject().put("image", "data:image/jpeg;base64," + b64).put("width", w).put("height", h))
+    }
+
+    /** Naslov od zunaj (namera, Safeer Link) ali null; zavrnjen se ne nalozi (javascript:, data:, intent: ...). */
+    private fun varenVhod(url: String?, vhod: SpletVarnostPravila.Vhod, dovoljenjeBranja: Boolean = false): String? {
+        if (url.isNullOrEmpty()) return null
+        if (SpletVarnostPravila.vhodniNaslov(url, vhod, dovoljenjeBranja)) return url
+        android.util.Log.w("SafeerBrskalnik", "Zavrnjen naslov od zunaj ($vhod): " + url.substringBefore(':').take(16))
+        return null
+    }
+
+    /** Stran iz Safeer Linka (cast.url, share.screen, open_url): shemo je izbrala druga naprava. */
+    private fun odpriOdZunaj(url: String) {
+        varenVhod(url, SpletVarnostPravila.Vhod.LINK)?.let { openUrlInBrowser(it) }
     }
 
     private fun openUrlInBrowser(url: String) {
@@ -1522,7 +1538,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                 pogled,
                 { Pair(naslovStrani, imeStrani) },
                 { okno.dismiss() },
-                { naslov -> openUrlInBrowser(naslov) },
+                { naslov -> odpriOdZunaj(naslov) },
                 { cilj -> izberiDatotekoZaLink(cilj) },
                 { cilj, ime -> zahtevajZajemZaslona(cilj, ime) }
             )

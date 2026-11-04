@@ -252,7 +252,8 @@ class LinkSprejemnik : Service() {
             when (tip) {
                 "cast.url" -> {
                     val url = tovor.optString("url", "").trim()
-                    if (url.startsWith("http://") || url.startsWith("https://")) odpriStran(od, url, tovor.optString("title", ""))
+                    if (com.safeer.mobile.browser.SpletVarnostPravila.vhodniNaslov(url, com.safeer.mobile.browser.SpletVarnostPravila.Vhod.SPLET))
+                        odpriStran(od, url, tovor.optString("title", ""))
                 }
                 "share.text" -> {
                     val besedilo = tovor.optString("text", "")
@@ -264,7 +265,9 @@ class LinkSprejemnik : Service() {
                     if (tovor.optString("action", "") == "start") {
                         val pot = tovor.optString("path", "")
                         val url = if (pot.startsWith("/")) hubHttp() + pot else tovor.optString("url", "")
-                        if (url.isNotBlank()) odpriStran(od, url, I18n.t(this, "share_screen_of").replace("{ime}", od))
+                        // Naslov je izbrala druga naprava: samo http(s) (UXSS, 4. 11. 2026 kot TV share.screen).
+                        if (com.safeer.mobile.browser.SpletVarnostPravila.vhodniNaslov(url, com.safeer.mobile.browser.SpletVarnostPravila.Vhod.SPLET))
+                            odpriStran(od, url, I18n.t(this, "share_screen_of").replace("{ime}", od))
                     }
                 }
                 "share.file" -> {
