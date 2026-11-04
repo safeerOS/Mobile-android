@@ -41,6 +41,8 @@ java -cp "$TEST_OUTPUT/bank-guard.jar" com.safeer.threatfeed.BankGuardTestKt "$T
 java -cp "$TEST_OUTPUT/list-agent.jar" com.safeer.threatfeed.ThreatListAgentTestKt
 "$KOTLINC" "$FEED_DIR/FilterListEngine.kt" "$TEST_DIR/FilterListEngineTest.kt" -include-runtime -d "$TEST_OUTPUT/filter-list.jar"
 java -cp "$TEST_OUTPUT/filter-list.jar" com.safeer.threatfeed.FilterListEngineTestKt
+# Ujemalnik ABP brez Pattern: enakost s starim regexom (s SAFEER_EASYLIST na polnem EasyList).
+KOTLINC="$KOTLINC" bash "$TEST_DIR/run_abp_vzorec_tests.sh"
 "$KOTLINC" "$FEED_DIR/SponsorBlock.kt" "$FEED_DIR/BankGuard.kt" "$FEED_DIR/BankGuardData.kt" "$TEST_DIR/SponsorBlockTest.kt" -include-runtime -d "$TEST_OUTPUT/sponsorblock.jar"
 java -cp "$TEST_OUTPUT/sponsorblock.jar" com.safeer.threatfeed.SponsorBlockTestKt
 ANDROID_JAR="${ANDROID_JAR:-$PROJECT_DIR/../streamN-TV2/android_tv/.tools/android.jar}"
