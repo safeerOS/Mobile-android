@@ -108,7 +108,7 @@ object ThreatFeedsUpdater {
                 now - success > 24 * 3600 -> "Seznam ni bil uspešno preverjen več kot 24 ur"
                 else -> "Preverjeno"
             }
-            val count = lists.find { it.source.id == source.id }?.entries?.size ?: 0
+            val count = lists.find { it.source.id == source.id }?.count ?: 0
             "${source.name}: $count pravil\nZadnje uspešno preverjanje: $last\n$state"
         }
         val running = if (agent?.isRefreshing == true) "\nPreverjanje poteka …" else ""
