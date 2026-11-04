@@ -132,4 +132,10 @@ grep -q "celovitost potrjena" "$D/izpis"; preveri "pravilna izdaja: vsota prever
 grep -q "am start -n com.safeer.mobile.browser/.MainActivity" "$D/izpis"; preveri "zagon com.safeer.mobile.browser/.MainActivity" 0 $?
 ! grep -q "pm grant" "$D/izpis"; preveri "namestitev ne podeli pravic" 0 $?
 
+# Neodvisni pregled 4. 11. 2026 09:10: podpisnika bere samo apksigner z absolutne poti (ne keytool, ki vidi le v1).
+echo "== podpisnik (locen proces, lazna orodja)"
+# shellcheck source=tests/lazna_namestitev.sh
+source "$TEST_DIR/lazna_namestitev.sh"
+preizkusi_podpisnika "$SKRIPTA" '{"browser_download_url": "'"$GH"'/'"$IME"'", "browser_download_url": "'"$GH"'/SHA256SUMS"}' "$IME" "$MOBILNI_ODTIS"
+
 if [ "$napak" -eq 0 ]; then echo "INSTALL TESTI: OK"; else echo "INSTALL TESTI: $napak napak"; exit 1; fi
