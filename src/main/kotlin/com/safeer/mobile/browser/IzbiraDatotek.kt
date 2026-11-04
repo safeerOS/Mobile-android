@@ -39,7 +39,8 @@ object IzbiraDatotek {
         val ok = uriji.filterNotNull().distinct().filter { u ->
             val m = CONTENT.find(u) ?: return@filter false
             val oznaka = m.groupValues[1].lowercase().substringAfterLast('@').substringBefore(':')
-            oznaka.isNotEmpty() && oznaka != lastna && !oznaka.startsWith("$lastna.")
+            // %-kodirana avtoriteta (com.safeer.mobile%2ebrowser...) se steje za naso (kot TV 9e09a7f2, 4. 11. 2026).
+            oznaka.isNotEmpty() && '%' !in oznaka && oznaka != lastna && !oznaka.startsWith("$lastna.")
         }
         return if (vec) ok else ok.take(1)
     }
