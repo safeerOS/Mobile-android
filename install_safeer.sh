@@ -49,6 +49,44 @@ preveri_sha256() {
     echo "🔒 SHA-256 celovitost potrjena ($dejansko)"
 }
 
+# Tedenski pregled 4. 11. 2026 (S5): pred namestitvijo preverimo tudi podpisnika APK - SHA256SUMS je v isti izdaji kot APK,
+# zato sama vsota ne loci ponarejene izdaje. Javni odtis SHA-256 potrdila mobilnega kljuca Safeer, izmerjen z
+# »apksigner verify --print-certs« na uradnem safeer-browser-android-1.0.37.apk (4. 11. 2026). Ni skrivnost.
+MOBILNI_ODTIS="442B4A455551887DDB7BB2F2F62CC1574EE3EF0EEBB56246A2E425C9E9D9CC55"
+
+# Odtis SHA-256 podpisnika APK ($1), velike crke brez dvopicij; prazno, ce ga ni mogoce prebrati. apksigner (Android
+# build-tools) zna sheme v2/v3, keytool (JDK) samo v1.
+odtis_apk() {
+    local apk="$1" as=""
+    as="$(command -v apksigner 2>/dev/null || true)"
+    if [ -z "$as" ] && [ -n "${ANDROID_HOME:-}" ]; then
+        as="$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n 1)"
+    fi
+    if [ -n "$as" ]; then
+        "$as" verify --print-certs "$apk" 2>/dev/null | awk -F': ' '/^Signer #1 certificate SHA-256 digest:/ { print toupper($2); exit }'
+        return 0
+    fi
+    if command -v keytool >/dev/null 2>&1; then
+        keytool -printcert -jarfile "$apk" 2>/dev/null | awk '/SHA256:/ { gsub(":", "", $2); print toupper($2); exit }'
+    fi
+}
+
+# Vrne 0 samo, ce je APK podpisan z mobilnim kljucem Safeer; sicer izpise razlog in vrne 1.
+preveri_podpis() {
+    local odtis
+    odtis="$(odtis_apk "$1")"
+    if [ -z "$odtis" ]; then
+        echo "❌ Podpisa APK ni mogoče preveriti (potrebno je orodje apksigner iz Android build-tools ali keytool iz JDK)."
+        echo "👉 Namesti eno od njiju ali prenesi APK s https://safeer.si/browser/android/"
+        return 1
+    fi
+    if [ "$odtis" != "$MOBILNI_ODTIS" ]; then
+        echo "❌ APK NI podpisan s ključem Safeer (odtis: $odtis). Prekinjam namestitev."
+        return 1
+    fi
+    echo "🔏 Podpis Safeer potrjen."
+}
+
 glavno() {
     # Zacasne datoteke v svoji mapi (mktemp -d), ne na predvidljivi poti v /tmp: drug uporabnik bi jo lahko vnaprej
     # pripravil ali zamenjal med prenosom in namestitvijo. Mapa izgine ob izhodu. (Preizkus poda svoje poti.)
@@ -102,6 +140,7 @@ glavno() {
         if [ -n "$DEVICE" ]; then
             echo "📱 Zaznana ADB naprava: $DEVICE"
             echo "📲 Nameščam Safeer Browser..."
+            preveri_podpis "$TEMP_APK" || exit 1
             adb -s "$DEVICE" install -r "$TEMP_APK"
             echo "🚀 Zaganjam Safeer Browser..."
             adb -s "$DEVICE" shell am start -n "$PAKET/.MainActivity"

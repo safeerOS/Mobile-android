@@ -97,6 +97,26 @@ preveri "SHA256SUMS brez vrstice za APK izdaje -> 1" 1 $?
 preveri "napacna vsota v izdaji -> 1" 1 $?
 ! grep -q "ADB POKLICAN" "$D/izpis"; preveri "napacna vsota: adb se ne poklice" 0 $?
 
+# S5: podpisnik APK pred namestitvijo (odtis_apk je nadomestek).
+odtis_apk() { printf '%s' "$LAZNI_ODTIS_APK"; }
+( LAZNI_ODTIS_APK="$MOBILNI_ODTIS"; preveri_podpis "$D/$IME" ) > "$D/izpis" 2>&1; preveri "pravi podpisnik -> 0" 0 $?
+( LAZNI_ODTIS_APK="0000000000000000000000000000000000000000000000000000000000000000"; preveri_podpis "$D/$IME" ) > "$D/izpis" 2>&1
+preveri "tuj podpisnik -> 1" 1 $?
+( LAZNI_ODTIS_APK=""; preveri_podpis "$D/$IME" ) > "$D/izpis" 2>&1; preveri "podpisa ni mogoce prebrati -> 1" 1 $?
+( LAZNI_ODTIS_APK="1111111111111111111111111111111111111111111111111111111111111111"
+  curl() {
+      case "$*" in
+          *api.github.com*) printf '{"browser_download_url": "%s/%s", "browser_download_url": "%s/SHA256SUMS"}' "$GH" "$IME" "$GH" ;;
+          *) local o=""; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && o="$2"; shift; done
+             case "$o" in *s6) printf '%s  %s\n' "$PRAVA" "$IME" > "$o" ;; *) printf 'ponarejen apk' > "$o" ;; esac ;;
+      esac
+  }
+  adb() { case "$1" in devices) printf 'List of devices attached\nNAPRAVA\tdevice\n' ;; *) echo "adb $*" ;; esac; }
+  TEMP_APK="$D/f.apk"; TEMP_SHA="$D/s6"; glavno ) > "$D/izpis" 2>&1
+preveri "tuj podpisnik v izdaji -> 1" 1 $?
+! grep -q "adb -s NAPRAVA install" "$D/izpis"; preveri "tuj podpisnik: adb install se ne poklice" 0 $?
+LAZNI_ODTIS_APK="$MOBILNI_ODTIS"
+
 # Pravilna izdaja: preveri vsoto, namesti in zazene com.safeer.mobile.browser (adb nadomestek).
 ( curl() {
       case "$*" in
