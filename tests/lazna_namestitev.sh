@@ -91,3 +91,55 @@ preizkusi_podpisnika() {
     ! grep -q " install " "$m/adb.log"; preveri "ne preveri: ni namestitve" 0 $?
     rm -rf "$m"
 }
+
+# Samo Mobile-android (N10, S3; na Android-tv preizkuseno v run_install_tests.sh z nadomestki): skripta kot locen proces z
+# vec laznimi napravami ADB in TEMP_APK/TEMP_SHA iz okolja (napadalec jih nastavi na pot, ki jo nadzira).
+# $1 = mapa, $2 = naprave (s presledki), ostalo = argumenti skripte; skripta je v SKRIPTA_NAPRAV
+pozeni_z_napravami() {
+    local m="$1" naprave="$2"; shift 2
+    : > "$m/adb.log"; rm -f "$m/delo"/*
+    printf '%s' "$naprave" > "$m/naprave"
+    printf 'podtaknjeno' > "$m/podtaknjen.apk"
+    ( cd "$m/delo" && env -i PATH="$m/bin:/usr/bin:/bin" HOME="$m/dom" ANDROID_HOME="$m/sdk" LAZNA_MAPA="$m" \
+        TEMP_APK="$m/podtaknjen.apk" TEMP_SHA="$m/podtaknjen.sums" bash "$SKRIPTA_NAPRAV" "$@" ) > "$m/izpis" 2>&1
+}
+
+# $1 = skripta, $2 = JSON izdaje, $3 = ime APK, $4 = Safeerjev odtis
+preizkusi_napravo_in_mapo() {
+    local m safeer
+    SKRIPTA_NAPRAV="$1"
+    m="$(mktemp -d)"
+    pripravi_lazna_orodja "$m" "$2" "$3"
+    safeer="$(printf '%s' "$4" | tr 'A-F' 'a-f')"
+    mkdir -p "$m/sdk/build-tools/36.0.0"; cp "$m/apksigner" "$m/sdk/build-tools/36.0.0/apksigner"
+    printf 'Verifies\nSigner #1 certificate SHA-256 digest: %s\n' "$safeer" > "$m/apksigner.izpis"; printf '0' > "$m/apksigner.rc"
+    cat > "$m/bin/adb" <<'SH'
+#!/usr/bin/env bash
+echo "adb $*" >> "$LAZNA_MAPA/adb.log"
+if [ "${1:-}" = devices ]; then
+    printf 'List of devices attached\n'
+    for n in $(cat "$LAZNA_MAPA/naprave"); do printf '%s\tdevice\n' "$n"; done
+fi
+exit 0
+SH
+    chmod +x "$m/bin/adb"
+
+    pozeni_z_napravami "$m" "TV1 TELEFON"
+    preveri "dve napravi brez izbire -> 1" 1 $?
+    ! grep -q " install " "$m/adb.log"; preveri "dve napravi brez izbire: ni namestitve (ne prva)" 0 $?
+    grep -q "izberi telefon" "$m/izpis"; preveri "dve napravi: sporocilo" 0 $?
+    pozeni_z_napravami "$m" "TV1 TELEFON" TELEFON
+    preveri "izbrana naprava -> 0" 0 $?
+    grep -q "adb -s TELEFON install -r" "$m/adb.log"; preveri "izbrana naprava: namesti nanjo" 0 $?
+    ! grep -q "adb -s TV1 " "$m/adb.log"; preveri "izbrana naprava: druge ne dotakne" 0 $?
+    grep -qx "podtaknjeno" "$m/podtaknjen.apk"; preveri "TEMP_APK iz okolja ostane nedotaknjen" 0 $?
+    ! grep -qF "$m/podtaknjen.apk" "$m/adb.log"; preveri "TEMP_APK iz okolja se ne namesti" 0 $?
+    preveri "TEMP_SHA iz okolja se ne ustvari" 0 "$(if [ ! -e "$m/podtaknjen.sums" ]; then echo 0; else echo 1; fi)"
+    pozeni_z_napravami "$m" "TV1" TELEFON
+    preveri "izbrane naprave ni -> 1" 1 $?
+    ! grep -q " install " "$m/adb.log"; preveri "izbrane naprave ni: ni namestitve" 0 $?
+    pozeni_z_napravami "$m" "TELEFON"
+    preveri "edina naprava -> 0" 0 $?
+    grep -q "adb -s TELEFON install -r" "$m/adb.log"; preveri "edina naprava: namesti nanjo" 0 $?
+    rm -rf "$m"
+}

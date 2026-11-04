@@ -98,15 +98,33 @@ preveri_podpis() {
     echo "🔏 Podpis Safeer potrjen."
 }
 
-glavno() {
-    # Zacasne datoteke v svoji mapi (mktemp -d), ne na predvidljivi poti v /tmp: drug uporabnik bi jo lahko vnaprej
-    # pripravil ali zamenjal med prenosom in namestitvijo. Mapa izgine ob izhodu. (Preizkus poda svoje poti.)
-    if [ -z "${TEMP_APK:-}" ]; then
-        D="$(mktemp -d)"
-        trap 'rm -rf "$D"' EXIT
-        TEMP_APK="$D/Safeer-Browser.apk"
-        TEMP_SHA="$D/Safeer-Browser.SHA256SUMS"
+# Naprava za namestitev (S3, prevzeto iz Android-tv 4. 11. 2026): izbrana ($1) ali edina povezana. Vec naprav brez
+# izbire -> prazno in sporocilo (nikoli prva v seznamu - lahko je tuja naprava ali TV namesto telefona).
+izberi_napravo() {
+    local izbrana="$1" naprave stevilo
+    naprave="$(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')"
+    if [ -n "$izbrana" ]; then
+        if printf '%s\n' "$naprave" | grep -qxF "$izbrana"; then echo "$izbrana"; else echo "❌ Naprava $izbrana ni povezana prek ADB." >&2; fi
+        return 0
     fi
+    stevilo="$(printf '%s\n' "$naprave" | grep -c . || true)"
+    if [ "$stevilo" -gt 1 ]; then
+        echo "❌ Povezanih je več naprav ADB - izberi telefon: install_safeer.sh <serijska ali IP:vrata>" >&2
+        printf '%s\n' "$naprave" | sed 's/^/   /' >&2
+        return 0
+    fi
+    printf '%s' "$naprave"
+}
+
+glavno() {
+    local izbrana="${1:-}"
+    # Zacasne datoteke vedno v svoji mapi (mktemp -d), ne na predvidljivi poti v /tmp ali poti iz okolja (N10, prevzeto
+    # iz Android-tv 4. 11. 2026: prej je TEMP_APK iz okolja dolocil, kam se APK prenese): drug uporabnik bi jo lahko
+    # vnaprej pripravil ali zamenjal med prenosom in namestitvijo. Mapa izgine ob izhodu.
+    MAPA_NAMESTITVE="$(mktemp -d)"
+    trap 'rm -rf "$MAPA_NAMESTITVE"' EXIT
+    TEMP_APK="$MAPA_NAMESTITVE/Safeer-Browser.apk"
+    TEMP_SHA="$MAPA_NAMESTITVE/Safeer-Browser.SHA256SUMS"
 
     IZDAJA_JSON="$(curl "${CURL_VARNO[@]}" -fsL "$IZDAJA_API" || true)"
     APK_URL="$(naslov_iz_izdaje "$IZDAJA_JSON" "$VZOREC_APK")"
@@ -147,7 +165,11 @@ glavno() {
 
     # Preveri prisotnost ADB
     if command -v adb >/dev/null 2>&1; then
-        DEVICE=$(adb devices | grep -v "List" | grep "device$" | head -n 1 | awk '{print $1}')
+        DEVICE="$(izberi_napravo "$izbrana")"
+        if [ -z "$DEVICE" ] && [ -n "$izbrana$(adb devices | awk 'NR > 1 && $2 == "device"')" ]; then
+            # Izbrane ni ali jih je vec brez izbire: ne namestimo na nakljucno napravo.
+            exit 1
+        fi
         if [ -n "$DEVICE" ]; then
             echo "📱 Zaznana ADB naprava: $DEVICE"
             echo "📲 Nameščam Safeer Browser..."
