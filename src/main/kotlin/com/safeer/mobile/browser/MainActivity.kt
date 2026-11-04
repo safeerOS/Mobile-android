@@ -385,8 +385,18 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Zaspan aktivni zavihek se zbudi, preden je okno spet vidno (onResume ga le nadaljuje).
+        if (::tabManager.isInitialized) tabManager.naPrihod()
+    }
+
     override fun onStop() {
-        tabManager.saveSession()
+        if (::tabManager.isInitialized) {
+            tabManager.saveSession()
+            // Ni na zaslonu (ne le onPause zaradi pogovornega okna): cez 30 s zaspi vse, kar ne predvaja.
+            tabManager.naOdhod()
+        }
         super.onStop()
     }
 
