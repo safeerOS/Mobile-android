@@ -71,6 +71,14 @@ fun main() {
                      "file:///proc/self/root/x.pdf", "file://localhost/data/x.pdf", "file:///sdcard/beleznica.txt", "file:///sdcard/x.pdf/..")) {
         check(!P.vhodniNaslov(u, N)) { "namera: $u" }
     }
+    // Obvestilo Linka (4. 11. 2026): domaca stran z dodatkom, ker je NAMERA kot data ne sprejme (pravilo ostane).
+    check(!P.vhodniNaslov(P.DOMACA_BRSKALNIKA, N)) { "domaca stran kot data od zunaj ostane zavrnjena" }
+    check(P.obvestiloStrani(P.DOMACA_BRSKALNIKA) == P.ObvestiloStrani.DOMACA) { "domaca stran prek dodatka" }
+    check(P.obvestiloStrani(P.DOMACA_BRSKALNIKA + "?x=1") == P.ObvestiloStrani.DOMACA)
+    for (u in listOf("https://a.si/x", "http://192.168.1.5:8443/cast/screen/abc"))
+        check(P.obvestiloStrani(u) == P.ObvestiloStrani.NASLOV && P.vhodniNaslov(u, N)) { "obvestilo: $u" }
+    for (u in listOf("javascript:alert(1)", "data:text/html,x", "file:///android_asset/link/index.html", "", null))
+        check(P.obvestiloStrani(u) == P.ObvestiloStrani.ZAVRNI) { "obvestilo zavrne: $u" }
     // Prenos s TV 05d2336d (4. 11. 2026): odkodirana pot, samo skupna shramba.
     for (u in listOf("file:///%64ata/data/com.safeer.mobile.browser/x.pdf", "file:///%64ATA/user/0/com.safeer.mobile.browser/x.pdf",
                      "file:///data_mirror/data_ce/null/0/com.safeer.mobile.browser/x.pdf", "file:///mnt/expand/1/user/0/com.safeer.mobile.browser/x.pdf",

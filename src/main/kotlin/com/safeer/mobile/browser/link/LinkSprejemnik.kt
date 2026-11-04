@@ -323,8 +323,14 @@ class LinkSprejemnik : Service() {
             glavnaNit.post { v(url) }
             return
         }
-        val namera = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setClass(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Domaca stran ni dovoljena kot data od zunaj (NAMERA): gre z notranjim dodatkom na izrecni komponenti.
+        val namera = when (com.safeer.mobile.browser.SpletVarnostPravila.obvestiloStrani(url)) {
+            com.safeer.mobile.browser.SpletVarnostPravila.ObvestiloStrani.DOMACA -> Intent(this, MainActivity::class.java)
+                .setAction(Intent.ACTION_MAIN).putExtra(MainActivity.EXTRA_ODPRI_DOMACO, true)
+            com.safeer.mobile.browser.SpletVarnostPravila.ObvestiloStrani.NASLOV ->
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).setClass(this, MainActivity::class.java)
+            com.safeer.mobile.browser.SpletVarnostPravila.ObvestiloStrani.ZAVRNI -> return
+        }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val klik = PendingIntent.getActivity(this, stevecObvestil, namera, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         objaviObvestilo(
             I18n.t(this, "share_received_page").replace("{ime}", od),

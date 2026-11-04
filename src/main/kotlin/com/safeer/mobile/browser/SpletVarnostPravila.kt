@@ -88,6 +88,21 @@ object SpletVarnostPravila {
         }
     }
 
+    /** Kako storitev Linka odpre stran prek obvestila, ko brskalnik ni v ospredju. */
+    enum class ObvestiloStrani { DOMACA, NASLOV, ZAVRNI }
+
+    /**
+     * Pregled 4. 11. 2026: po 371c011 je obvestilo domaco stran (Daljinec »home«, open_url home) poslalo kot namero VIEW z
+     * data file:///android_asset/..., ki je vrata NAMERA (pravilno) ne sprejmejo - ukaz z daljinca ni delal. Domaca stran
+     * zato gre z notranjim dodatkom MainActivity.EXTRA_ODPRI_DOMACO brez naslova (tuja aplikacija z istim dodatkom odpre
+     * samo domaco stran, nic drugega); vse ostalo kot data samo, ce ga NAMERA sprejme, sicer obvestila ni.
+     */
+    fun obvestiloStrani(url: String?): ObvestiloStrani = when {
+        jeDomacaBrskalnika(url) -> ObvestiloStrani.DOMACA
+        vhodniNaslov(url, Vhod.NAMERA) -> ObvestiloStrani.NASLOV
+        else -> ObvestiloStrani.ZAVRNI
+    }
+
     /**
      * Zadnja vrata v ChromiumEngineView.loadUrl (kot TV, 4. 11. 2026): nasa koda z loadUrl nikoli ne nalozi skripte ali
      * dokumenta data: (preverjeno z grep; svoje strani nalagamo z loadDataWithBaseURL), zato je tak naslov vedno

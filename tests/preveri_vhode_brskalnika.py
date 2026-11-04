@@ -55,6 +55,12 @@ def main() -> int:
         napake.append("MainActivity.kt: LinkSprejemnik.naStran brez preverbe")
     if re.search(r"\{ naslov -> openUrlInBrowser\(naslov\) \},\s*\{ cilj -> izberiDatotekoZaLink", main_kt):
         napake.append("MainActivity.kt: odpiranje iz LinkMost brez preverbe")
+    # Obvestilo Linka (4. 11. 2026): domaca stran ne sme iti kot data VIEW (NAMERA jo zavrne, daljinec »home« ne dela).
+    spr = telo((B / "link/LinkSprejemnik.kt").read_text(encoding="utf-8"), "private fun odpriStran(", 22)
+    if "obvestiloStrani(url)" not in spr or "EXTRA_ODPRI_DOMACO" not in spr:
+        napake.append("LinkSprejemnik.kt: odpriStran ne loci domace strani (obvestiloStrani, EXTRA_ODPRI_DOMACO)")
+    if "getBooleanExtra(EXTRA_ODPRI_DOMACO" not in main_kt:
+        napake.append("MainActivity.kt: EXTRA_ODPRI_DOMACO se ne bere")
     for n in napake:
         print("NAPAKA:", n)
     if napake:

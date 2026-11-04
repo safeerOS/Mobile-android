@@ -26,6 +26,8 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
     companion object {
         /** Dodatek namere: ob zagonu odpri seznam prenosov (obvestilo o prejeti datoteki prek Safeer Linka). */
         const val ODPRI_PRENOSE = "com.safeer.mobile.browser.ODPRI_PRENOSE"
+        /** Obvestilo Linka: odpri domaco stran (brez naslova v nameri; SpletVarnostPravila.obvestiloStrani). */
+        const val EXTRA_ODPRI_DOMACO = "com.safeer.mobile.browser.ODPRI_DOMACO"
         private const val REQ_CODE_PERMISSIONS = 1001
         private const val REQ_CODE_GEO_PERMISSIONS = 1002
         private const val REQ_CODE_NOTIFICATION = 1003
@@ -213,6 +215,13 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                     }
                 }
             }
+        }
+
+        // Daljinec »home« prek obvestila (4. 11. 2026): samo zastavica, naslov je nasa konstanta - od tuje aplikacije
+        // odpre kvecjemu domaco stran.
+        if (intent?.getBooleanExtra(EXTRA_ODPRI_DOMACO, false) == true) {
+            intent.removeExtra(EXTRA_ODPRI_DOMACO)
+            if (targetUrl == null) targetUrl = SpletVarnostPravila.DOMACA_BRSKALNIKA
         }
 
         val restored = isInitial && tabManager.restoreSession()
