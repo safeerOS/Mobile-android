@@ -138,6 +138,19 @@ fun main() {
     preveri("vnos tocno na meji ni vec »od prej«",
         p.podedovani(listOf(DostopPravila.Clan("a", jaz, meja - 1), DostopPravila.Clan("b", tablica, meja)), jaz, jedroOd).isEmpty())
     preveri("meja je 6. 10. 2026 00:00:00 UTC", meja == 1_791_244_800.0)
+    // Neodvisni pregled 4. 11. 2026 09:10: »dodano« vpise druga naprava - tuj kljuc z izmisljenim starim casom, ki ga ta
+    // naprava pred uvedbo ni imela v krogu, ne podeduje nicesar; kljuci iz lastnega zapisa pa ostanejo.
+    val vsiljivec = "ffff000000000006"
+    val sVsiljivcem = krog + DostopPravila.Clan("n-$vsiljivec", vsiljivec, 1.0)
+    preveri("brez lastnega zapisa (TV) stari cas od drugod velja", "n-$vsiljivec" in p.podedovani(sVsiljivcem, jaz, jedroOd))
+    val znani = setOf(jaz, tablica, televizor, gost)
+    preveri("kljuc, ki ga ta naprava ni imela, z izmisljenim casom ne podeduje",
+        "n-$vsiljivec" !in p.podedovani(sVsiljivcem, jaz, jedroOd, meja, znani))
+    preveri("dosedanje naprave iz lastnega zapisa obdrzijo dostop",
+        p.podedovani(sVsiljivcem, jaz, jedroOd, meja, znani) == setOf("n-$tablica", "n-$televizor"))
+    preveri("ce te naprave ni bilo v lastnem zapisu, ne podeduje nikogar",
+        p.podedovani(sVsiljivcem, jaz, jedroOd, meja, setOf(tablica, televizor)).isEmpty())
+    preveri("prazen lastni zapis (nova namestitev): nihce", p.podedovani(sVsiljivcem, jaz, jedroOd, meja, emptySet()).isEmpty())
 
     // Dotik gledalca deljenega zaslona (posiljatelj »gledalec« ni naprava v Linku).
     val zZaslonom = setOf(Zmoznost.ZASLON)

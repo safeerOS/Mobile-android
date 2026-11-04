@@ -24,11 +24,34 @@ object Dostop {
     private const val PREFS = "safeer_dostop"
     private const val KLJUC_NAPRAVE = "naprave"
     private const val KLJUC_PODEDOVANO = "podedovano_ob"
+    /**
+     * Neodvisni pregled 4. 11. 2026 09:10: kljuci clanov kroga, kot jih je ta naprava hranila ob prvem zagonu procesa z
+     * dovoljenji - zapise jih [zapomniZnane] iz Application.onCreate, preden Link sprejme karkoli. Cas »dodano« v krogu
+     * nastavi druga naprava, zato sam ne odloca o podedovanem dostopu.
+     */
+    private const val KLJUC_ZNANI = "znani_ob_uvedbi"
+    /** Krog te naprave na disku (KrogNaprave: safeer_cast_prefs / KrogZaupanja.KLJUC_SHRAMBE). */
+    private const val PREFS_KROGA = "safeer_cast_prefs"
 
     /** 4. 11. 2026 00:00:00 UTC - uvedba dovoljenj na telefonu (TV: DostopPravila.MEJA_PODEDOVANJA, 6. 10. 2026). */
     const val MEJA_TELEFONA = 1_793_750_400.0
 
     private var zapis: HashMap<String, Set<Zmoznost>>? = null
+
+    /**
+     * Enkrat, ob prvem zagonu z dovoljenji (Application.onCreate - pred vsako storitvijo in sporocilom Linka): kljuci, ki
+     * jih je ta naprava ze imela v krogu. Bere krog z diska v svoj primerek (ne v skupni KrogNaprave), commit = zapis takoj.
+     */
+    fun zapomniZnane(ctx: Context) {
+        try {
+            val prefs = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            if (prefs.contains(KLJUC_PODEDOVANO) || prefs.contains(KLJUC_ZNANI)) return
+            val json = ctx.applicationContext.getSharedPreferences(PREFS_KROGA, Context.MODE_PRIVATE).getString(KrogZaupanja.KLJUC_SHRAMBE, null)
+            val kljuci = if (json.isNullOrBlank()) emptySet()
+                else KrogZaupanja().apply { zdruzi(json, obvesti = false) }.clani().map { it.kljuc }.toSet()
+            prefs.edit().putStringSet(KLJUC_ZNANI, kljuci).commit()
+        } catch (e: Throwable) { Log.w(TAG, "znani kljuci ob uvedbi: ${e.javaClass.simpleName}") }
+    }
 
     private fun lastniKljuc(): String? = try { HubTls.javniKljucB64() } catch (_: Throwable) { null }
 
@@ -46,11 +69,13 @@ object Dostop {
         if (!prefs.contains(KLJUC_PODEDOVANO)) {
             val krog = KrogNaprave.krog(ctx)
             val podedovani = try {
+                // Brez zapisa [zapomniZnane] (ne bi smelo biti) nihce ne podeduje: »ne vem« ni »da«.
+                val znani = prefs.getStringSet(KLJUC_ZNANI, null)?.toSet() ?: emptySet()
                 DostopPravila.podedovani(krog.clani().map { DostopPravila.Clan(it.id, it.kljuc, it.dodano) }, lastniKljuc(),
-                    KrogZaupanja::idIzKljuca, MEJA_TELEFONA)
+                    KrogZaupanja::idIzKljuca, MEJA_TELEFONA, znani)
             } catch (_: Throwable) { emptySet() }
             for (j in podedovani) if (j !in m) m[j] = DostopPravila.VSE_ZMOZNOSTI
-            prefs.edit().putString(KLJUC_NAPRAVE, vJson(m)).putLong(KLJUC_PODEDOVANO, System.currentTimeMillis()).apply()
+            prefs.edit().putString(KLJUC_NAPRAVE, vJson(m)).putLong(KLJUC_PODEDOVANO, System.currentTimeMillis()).remove(KLJUC_ZNANI).apply()
             Log.i(TAG, "Dovoljenja uvedena: dostop obdrzi ${podedovani.size} dosedanjih naprav; nove zacnejo brez dostopa.")
         }
         zapis = m

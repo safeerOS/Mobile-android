@@ -50,6 +50,16 @@ pred(t, "zetoni.clear()", "tece.set(false)", "DatotekeStreznik.ustavi: zetoni os
 t = telo("link/DatotekeStreznik.kt", "fun nastavi(context: Context, vklop: Boolean)")
 pred(t, "if (!vklop) ustavi()", "}", "DatotekeStreznik.nastavi: izklop ne ustavi streznika")
 
+# Neodvisni pregled 4. 11. 2026 09:10: podedovan dostop samo za kljuce iz lastnega zapisa, zapisanega pred Linkom.
+man = (koren / "AndroidManifest.xml").read_text(encoding="utf-8")
+if 'android:name="com.safeer.mobile.browser.SafeerAplikacija"' not in man:
+    napake.append("AndroidManifest: application brez SafeerAplikacija (Dostop.zapomniZnane se ne zazene pred Linkom)")
+t = telo("SafeerAplikacija.kt", "override fun onCreate()")
+pred(t, "super.onCreate()", "Dostop.zapomniZnane(this)", "SafeerAplikacija.onCreate: brez Dostop.zapomniZnane")
+t = telo("cast/Dostop.kt", "private fun nalozen(")
+if "MEJA_TELEFONA, znani)" not in t:
+    napake.append("Dostop.nalozen: podedovani brez lastnega zapisa znanih kljucev")
+
 # Vsak klic Daljinec.izvedi v izvorni kodi mora biti v enem od zgornjih (novega mesta brez preverbe ni).
 klici = [str(p.relative_to(SRC)) for p in SRC.rglob("*.kt") if re.search(r"Daljinec\.izvedi\(", p.read_text(encoding="utf-8"))]
 for k in klici:
