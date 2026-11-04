@@ -71,6 +71,19 @@ fun main() {
                      "file:///proc/self/root/x.pdf", "file://localhost/data/x.pdf", "file:///sdcard/beleznica.txt", "file:///sdcard/x.pdf/..")) {
         check(!P.vhodniNaslov(u, N)) { "namera: $u" }
     }
+    // Prenos s TV 05d2336d (4. 11. 2026): odkodirana pot, samo skupna shramba.
+    for (u in listOf("file:///%64ata/data/com.safeer.mobile.browser/x.pdf", "file:///%64ATA/user/0/com.safeer.mobile.browser/x.pdf",
+                     "file:///data_mirror/data_ce/null/0/com.safeer.mobile.browser/x.pdf", "file:///mnt/expand/1/user/0/com.safeer.mobile.browser/x.pdf",
+                     "file:///sys/x.pdf", "file:///sdcard/%252e%252e/data/x.pdf", "file:///sdcard/%zz.pdf", "file:///sdcard/%2", "file:///sdcard/%-1.pdf",
+                     "file:///sdcard/x%00.pdf", "file:///sdcard/.", "file:///sdcard/%2E%2E/data/x.pdf", "file:///%61ndroid_asset/x.pdf",
+                     "file:////android_asset/x.pdf", "file:/sdcard/x.pdf", "file://localhost/sdcard/x.pdf", "file:///storage/emulated/0/x%2epdf%3f.html")) {
+        check(!P.vhodniNaslov(u, N)) { "namera (odkodirano): $u" }
+    }
+    for (u in listOf("file:///storage/1234-ABCD/Dokumenti/Ra%C4%8Dun%20maj.pdf", "file:///mnt/media_rw/1234-ABCD/x.PDF",
+                     "file:///storage/emulated/0//Download/x.pdf", "file:///sdcard/a..b.pdf")) {
+        check(P.vhodniNaslov(u, N)) { "PDF v skupni shrambi: $u" }
+    }
+    check(P.odkodirajPot("/a%20b%C4%8D") == "/a b\u010d" && P.odkodirajPot("/%C4") == null && P.odkodirajPot("/%") == null) { "odkodiranje" }
     check(P.vhodniNaslov("content://com.safeer.mobile.browser.fileprovider/cache/x.pdf", N, dovoljenjeBranja = true)) { "podeljeno branje" }
     check(P.vhodniNaslov("content://com.safeerx.ponudnik/x", N)) { "samo com.safeer.*, ne podobno ime" }
     for (v in listOf(L, W)) {
