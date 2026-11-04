@@ -63,6 +63,10 @@ fun main() {
     manager.suspendInactiveTabs()
     check(second.loadedWebView === secondView) { "nedokoncan obrazec v ozadju je umrl" }
     secondView.hasEditedForm = false
+    secondView.cakaIzbiroDatotek = true
+    manager.suspendInactiveTabs()
+    check(second.loadedWebView === secondView) { "odprt izbirnik datotek: zavihek je zaspal" }
+    secondView.cakaIzbiroDatotek = false
     manager.suspendInactiveTabs()
     check(second.loadedWebView == null && secondView.destroyed && container.children.isEmpty()) { "aktivni ni zaspal 180 s po odhodu" }
     manager.naPrihod()

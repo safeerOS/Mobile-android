@@ -100,6 +100,10 @@ class ChromiumEngineView @JvmOverloads constructor(
 
     /** PDF pregledovalnik prosi za prenos izvirnika (url, userAgent) - opravi ga navaden prenos. */
     var onPdfPrenos: ((String, String?) -> Unit)? = null
+    /** Stran odpira izbiro datotek (<input type=file>); MainActivity zazene sistemski izbirnik. */
+    var onIzbiraDatotek: ((ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams) -> Boolean)? = null
+    /** Sistemski izbirnik je odprt: zavihek ne sme zaspati, sicer se izbrana datoteka nima kam vrniti. */
+    @Volatile var cakaIzbiroDatotek: Boolean = false
     @Volatile var hasEditedForm: Boolean = false
         private set
 
@@ -431,6 +435,16 @@ class ChromiumEngineView @JvmOverloads constructor(
             // siva ploskev z ogromnim gumbom za predvajanje cez cel zaslon. Vrnemo
             // prazno (prosojno) sliko, da ostane vidno ozadje strani.
             override fun getDefaultVideoPoster(): android.graphics.Bitmap? = prazenPlakat
+
+            // Brez tega WebView izbiro datotek tiho preklice in nalaganje na strani ne dela (do 4. 11. 2026).
+            override fun onShowFileChooser(
+                webView: android.webkit.WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                if (filePathCallback == null || fileChooserParams == null) return false
+                return try { onIzbiraDatotek?.invoke(filePathCallback, fileChooserParams) ?: false } catch (_: Exception) { false }
+            }
 
             // Okna JavaScripta: privzeti WebChromeClient jih tiho preklice, zato jih
             // narisemo sami -- sicer prijave in potrditve na straneh ne delujejo.

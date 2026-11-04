@@ -92,7 +92,8 @@ class TabManager(
     private fun izjema(tab: TabModel, view: ChromiumEngineView): Boolean = SpanjePravila.izjema(
         predvaja = tab.isPlayingAudio || view.isPlayingAudio,
         celozaslonskiVideo = view.isFullscreenVideoActive(),
-        obrazec = view.hasEditedForm,
+        // Odprt izbirnik datotek steje kot obrazec: uporabnik je sredi nalaganja.
+        obrazec = view.hasEditedForm || view.cakaIzbiroDatotek,
         // Pojavno okno prijave in zavihek, ki ga je odprl, sta povezana (window.opener, postMessage): ce eden
         // zaspi, se prijava OAuth ne konca. Z rokom 60 s bi se to zgodilo ze med vpisom kode 2FA.
         prijava = AuthenticationPages.isAuthenticationPage(tab.url) || tab.jePojavni ||

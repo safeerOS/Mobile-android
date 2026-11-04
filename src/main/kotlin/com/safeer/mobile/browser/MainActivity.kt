@@ -32,6 +32,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         private const val REQ_CODE_DEFAULT_BROWSER = 1004
         private const val REQ_CODE_LINK_DATOTEKA = 1005
         private const val REQ_CODE_LINK_ZASLON = 1006
+        private const val REQ_CODE_IZBIRA_DATOTEK = 1007
     }
 
     private var keyboardWasVisible = false
@@ -262,6 +263,17 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_CODE_IZBIRA_DATOTEK) {
+            // Strani gre samo, kar je vrnil sistemski izbirnik (content://), nikoli naslov iz strani.
+            val surovi = mutableListOf<String?>()
+            if (resultCode == RESULT_OK && data != null) {
+                data.clipData?.let { c -> for (i in 0 until c.itemCount) surovi += c.getItemAt(i).uri?.toString() }
+                surovi += data.data?.toString()
+            }
+            val sprejeti = IzbiraDatotek.sprejmi(surovi, packageName, izbiraVec).map { android.net.Uri.parse(it) }
+            koncajIzbiroDatotek(if (sprejeti.isEmpty()) null else sprejeti.toTypedArray())
+            return
+        }
         if (requestCode == REQ_CODE_DEFAULT_BROWSER) {
             Toast.makeText(this, if (isDefaultBrowser()) R.string.default_browser_active else R.string.default_browser_unchanged, Toast.LENGTH_LONG).show()
         }
@@ -410,6 +422,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
     }
 
     override fun onDestroy() {
+        koncajIzbiroDatotek(null)
         MediaPlaybackService.toggleHandler = null
         MediaPlaybackService.pauseHandler = null
         MediaPlaybackService.stop(this)
@@ -697,8 +710,61 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         return true
     }
 
+    private var izbiraDatotek: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
+    private var izbiraPogled: ChromiumEngineView? = null
+    private var izbiraVec = false
+
+    /** <input type=file>: sistemski izbirnik (SAF), brez dovoljenja za shrambo. */
+    private fun odpriIzbiroDatotek(
+        pogled: ChromiumEngineView,
+        povratek: android.webkit.ValueCallback<Array<android.net.Uri>>,
+        parametri: android.webkit.WebChromeClient.FileChooserParams
+    ): Boolean {
+        // Nedokoncan prejsnji izbor zapremo s praznim odgovorom, sicer WebView naslednjega ne odpre.
+        koncajIzbiroDatotek(null)
+        val nacin = parametri.mode
+        val odpri = android.webkit.WebChromeClient.FileChooserParams.MODE_OPEN
+        val odpriVec = android.webkit.WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
+        // MODE_SAVE (shrani kot) brskalnik ne podpira: false, da WebView izbor zapre sam.
+        if (nacin != odpri && nacin != odpriVec) return false
+        val vec = nacin == odpriVec
+        val tipi = IzbiraDatotek.mimeTipi(parametri.acceptTypes) { k ->
+            android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(k)
+        }
+        val namera = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = tipi.singleOrNull() ?: IzbiraDatotek.VSE
+            if (tipi.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, tipi.toTypedArray())
+            if (vec) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        izbiraDatotek = povratek
+        izbiraVec = vec
+        izbiraPogled = pogled
+        pogled.cakaIzbiroDatotek = true
+        return try {
+            startActivityForResult(namera, REQ_CODE_IZBIRA_DATOTEK)
+            true
+        } catch (_: Exception) {
+            // Ni izbirnika: vrnemo false, WebView izbor zapre sam (povratka po false ne smemo klicati).
+            izbiraDatotek = null
+            izbiraPogled = null
+            pogled.cakaIzbiroDatotek = false
+            false
+        }
+    }
+
+    /** Odgovor strani: izbrane datoteke ali null ob preklicu - vedno natanko enkrat. */
+    private fun koncajIzbiroDatotek(uriji: Array<android.net.Uri>?) {
+        val povratek = izbiraDatotek ?: return
+        izbiraDatotek = null
+        izbiraPogled?.cakaIzbiroDatotek = false
+        izbiraPogled = null
+        try { povratek.onReceiveValue(uriji) } catch (_: Exception) { }
+    }
+
     private fun attachTabListeners(tab: TabModel) {
         val wv = tab.webView
+        wv.onIzbiraDatotek = { povratek, parametri -> odpriIzbiroDatotek(wv, povratek, parametri) }
 
         wv.onProgressUpdate = { progress ->
             if (tabManager.getActiveTab()?.id == tab.id) {
