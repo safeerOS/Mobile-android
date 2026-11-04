@@ -144,13 +144,43 @@ class QrPrijavaActivity : Activity() {
         }
         val besedilo = b("vprasajPridruzi").replace("{naslov}", p.naslov).replace("{odtis}", QrPravila.kratekOdtis(p.odtis)) +
             (if (QrPravila.preselitev(imaZeton, pripeti, p.odtis)) "\n\n" + b("preselitev") else "")
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        varnoVprasanje(AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle(b("naslovPridruzi"))
             .setMessage(besedilo)
-            .setPositiveButton(b("pridruzi")) { _, _ -> povezi(p) }
             .setNegativeButton(b("ne")) { _, _ -> finish() }
-            .setOnCancelListener { finish() }
-            .show()
+            .setOnCancelListener { finish() }, b("pridruzi")) { povezi(p) }
+    }
+
+    /** Dejavnost je v ospredju (med onResume in onPause). */
+    private var spredaj = false
+
+    override fun onResume() {
+        super.onResume()
+        spredaj = true
+    }
+
+    override fun onPause() {
+        spredaj = false
+        super.onPause()
+    }
+
+    /**
+     * Vprasanje z gumbom za potrditev, ki velja samo, ko je Safeer spredaj in vprasanje vidno (QrPravila.potrditevVelja,
+     * pregled 4. 11. 2026): povezavo lahko odpre katerakoli stran. Dotik skozi prekrivno okno (filterTouchesWhenObscured)
+     * in dotik takoj po prikazu ne stejeta; vprasanje ostane odprto, dokler uporabnik ne potrdi ali zavrne.
+     */
+    private fun varnoVprasanje(gradnik: AlertDialog.Builder, potrdi: String, obPotrditvi: () -> Unit) {
+        val okno = gradnik.setPositiveButton(potrdi, null).show()
+        val prikazano = android.os.SystemClock.uptimeMillis()
+        val gumb = okno.getButton(AlertDialog.BUTTON_POSITIVE) ?: return
+        gumb.filterTouchesWhenObscured = true
+        gumb.setOnClickListener {
+            val fokus = okno.window?.decorView?.hasWindowFocus() == true
+            if (QrPravila.potrditevVelja(spredaj, fokus, android.os.SystemClock.uptimeMillis() - prikazano)) {
+                okno.dismiss()
+                obPotrditvi()
+            }
+        }
     }
 
     private fun povezi(p: Pridruzitev) {
@@ -172,13 +202,11 @@ class QrPrijavaActivity : Activity() {
     }
 
     private fun vprasaj(ime: String) {
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        varnoVprasanje(AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle(b("naslov"))
             .setMessage(b("vprasanje").replace("{ime}", ime))
-            .setPositiveButton(b("dovoli")) { _, _ -> dovoli(ime) }
             .setNegativeButton(b("ne")) { _, _ -> finish() }
-            .setOnCancelListener { finish() }
-            .show()
+            .setOnCancelListener { finish() }, b("dovoli")) { dovoli(ime) }
     }
 
     private fun dovoli(ime: String) {

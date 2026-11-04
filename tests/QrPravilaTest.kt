@@ -52,5 +52,11 @@ fun main() {
     check(QrPravila.starOdtis(o.take(16)))
     check(!QrPravila.starOdtis(o))
     check(!QrPravila.starOdtis(o.take(15)))
+    // Potrditev samo, ko je Safeer spredaj in vprasanje vidno (pregled 4. 11. 2026).
+    check(QrPravila.potrditevVelja(true, true, QrPravila.ZAMIK_POTRDITVE_MS))
+    check(!QrPravila.potrditevVelja(false, true, 10_000)) { "Safeer ni spredaj" }
+    check(!QrPravila.potrditevVelja(true, false, 10_000)) { "vprasanje nima fokusa (drugo okno cez)" }
+    check(!QrPravila.potrditevVelja(true, true, QrPravila.ZAMIK_POTRDITVE_MS - 1)) { "dotik takoj po prikazu" }
+    check(QrPravila.ZAMIK_POTRDITVE_MS >= 500)
     println("QrPravilaTest: OK")
 }

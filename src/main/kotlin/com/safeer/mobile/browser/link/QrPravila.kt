@@ -60,6 +60,17 @@ object QrPravila {
     fun preselitev(imaZeton: Boolean, pripetiOdtis: String?, odtisIzKode: String): Boolean =
         imaZeton && !pripetiOdtis.isNullOrBlank() && !pripetiOdtis.equals(odtisIzKode, ignoreCase = true)
 
+    /**
+     * Potrditev prijave ali pridruzitve velja samo, ko je okno Safeer spredaj (dejavnost v ospredju), vprasanje ima fokus
+     * in je mineval zamik od prikaza. Pregled 4. 11. 2026: safeer://link/qr in https://safeer.si/p lahko odpre katerakoli
+     * stran; »Dovoli« ne sme veljati za dotik, ki ga je uporabnik namenil drugemu oknu (prekrivanje, hiter dvojni dotik).
+     */
+    fun potrditevVelja(spredaj: Boolean, oknoImaFokus: Boolean, msOdPrikaza: Long): Boolean =
+        spredaj && oknoImaFokus && msOdPrikaza >= ZAMIK_POTRDITVE_MS
+
+    /** Toliko po prikazu vprasanja gumb »Dovoli« se ne velja (kot Androidova okna za dovoljenja). */
+    const val ZAMIK_POTRDITVE_MS = 600L
+
     /** Odtis za prikaz uporabniku: prvih 16 znakov v skupinah po stiri (»a1b2 c3d4 e5f6 a7b8«). */
     fun kratekOdtis(odtis: String): String = odtis.take(16).chunked(4).joinToString(" ")
 }
