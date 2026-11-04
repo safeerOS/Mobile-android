@@ -1102,7 +1102,11 @@
       odstrani: "Odstrani",
       povezanNaTv: "Sme pošiljati na to napravo",
       nobeneNaprave: "Povežite naprave za lažje delo",
-      prizigam: "Prižigam …"
+      prizigam: "Prižigam …",
+      dostopDovoli: "Dovoli upravljanje tega telefona",
+      dostopOdvzemi: "Odvzemi upravljanje tega telefona",
+      dostopDa: "Ta naprava sme upravljati ta telefon (aplikacije, datoteke, strani, zaslon).",
+      dostopNe: "Ta naprava ne sme upravljati tega telefona. Pošilja mu lahko strani, besedila in datoteke."
     },
     en: {
       tuOpis: "Start connecting here: switch on Safeer Link, then on the other device type the code this device shows.",
@@ -1122,7 +1126,11 @@
       odstrani: "Remove",
       povezanNaTv: "May send to this device",
       nobeneNaprave: "Connect your devices to make work easier",
-      prizigam: "Turning on …"
+      prizigam: "Turning on …",
+      dostopDovoli: "Allow control of this phone",
+      dostopOdvzemi: "Revoke control of this phone",
+      dostopDa: "This device may control this phone (apps, files, pages, screen).",
+      dostopNe: "This device may not control this phone. It can still send it pages, text and files."
     },
     de: {
       tuOpis: "Beginne hier: Schalte Safeer Link ein und gib dann auf dem anderen Gerät den Code ein, den dieses Gerät anzeigt.",
@@ -1142,7 +1150,11 @@
       odstrani: "Entfernen",
       povezanNaTv: "Darf an dieses Gerät senden",
       nobeneNaprave: "Verbinde deine Geräte, um dir die Arbeit zu erleichtern",
-      prizigam: "Wird eingeschaltet …"
+      prizigam: "Wird eingeschaltet …",
+      dostopDovoli: "Steuerung dieses Telefons erlauben",
+      dostopOdvzemi: "Steuerung dieses Telefons entziehen",
+      dostopDa: "Dieses Gerät darf dieses Telefon steuern (Apps, Dateien, Seiten, Bildschirm).",
+      dostopNe: "Dieses Gerät darf dieses Telefon nicht steuern. Es kann ihm weiterhin Seiten, Text und Dateien senden."
     },
     es: {
       tuOpis: "Empieza a conectar aquí: activa Safeer Link y, en el otro dispositivo, escribe el código que muestra este.",
@@ -1162,7 +1174,11 @@
       odstrani: "Quitar",
       povezanNaTv: "Puede enviar a este dispositivo",
       nobeneNaprave: "Conecta tus dispositivos para trabajar más cómodo",
-      prizigam: "Activando …"
+      prizigam: "Activando …",
+      dostopDovoli: "Permitir controlar este teléfono",
+      dostopOdvzemi: "Retirar el control de este teléfono",
+      dostopDa: "Este dispositivo puede controlar este teléfono (apps, archivos, páginas, pantalla).",
+      dostopNe: "Este dispositivo no puede controlar este teléfono. Puede seguir enviándole páginas, texto y archivos."
     },
     fr: {
       tuOpis: "Commence ici : active Safeer Link, puis saisis sur l’autre appareil le code affiché par celui-ci.",
@@ -1182,7 +1198,11 @@
       odstrani: "Retirer",
       povezanNaTv: "Peut envoyer vers cet appareil",
       nobeneNaprave: "Connecte tes appareils pour te faciliter la vie",
-      prizigam: "Activation …"
+      prizigam: "Activation …",
+      dostopDovoli: "Autoriser le contrôle de ce téléphone",
+      dostopOdvzemi: "Retirer le contrôle de ce téléphone",
+      dostopDa: "Cet appareil peut contrôler ce téléphone (applis, fichiers, pages, écran).",
+      dostopNe: "Cet appareil ne peut pas contrôler ce téléphone. Il peut toujours lui envoyer des pages, du texte et des fichiers."
     },
     it: {
       tuOpis: "Inizia a collegare da qui: accendi Safeer Link, poi sull’altro dispositivo digita il codice mostrato da questo.",
@@ -1202,7 +1222,11 @@
       odstrani: "Rimuovi",
       povezanNaTv: "Può inviare a questo dispositivo",
       nobeneNaprave: "Collega i tuoi dispositivi per lavorare più comodamente",
-      prizigam: "Attivazione …"
+      prizigam: "Attivazione …",
+      dostopDovoli: "Consenti il controllo di questo telefono",
+      dostopOdvzemi: "Revoca il controllo di questo telefono",
+      dostopDa: "Questo dispositivo può controllare questo telefono (app, file, pagine, schermo).",
+      dostopNe: "Questo dispositivo non può controllare questo telefono. Può comunque inviargli pagine, testi e file."
     }
   };
   for (var _jezik in BESEDILA_HUB) {
@@ -2054,6 +2078,7 @@
     // Daljinec: napravo, ki javi zmoznost "remote", je mogoce upravljati (Safeer Control).
     var znaDaljinec = !samoIme && !!(most && most.ukaz) && ((naprava.zmoznosti || []).indexOf("remote") >= 0) && !!window.SafeerDaljinec;
     pokazi("gumbDaljinec", znaDaljinec);
+    narisiDostop();
     pokazi("izbireDeljenja", !samoIme);
     pokazi("opisIzbire", !samoIme);
     var izbire = document.querySelectorAll("#panelDeljenje .izbira");
@@ -2127,6 +2152,31 @@
     if (!most || !most.preimenujNapravo) return;
     besedilo("opombaDeljenje", t("posiljam"));
     most.preimenujNapravo(n.id, ime);
+  }
+
+  /**
+   * Ozji krog (tedenski pregled 4. 11. 2026): ali sme izbrana naprava upravljati ta telefon. Odloci uporabnik tega
+   * telefona; brez dovoljenja telefon ukaze te naprave zavrne (cast/Dostop).
+   */
+  function narisiDostop() {
+    var n = deljenje.naprava;
+    var zna = !!(most && most.dostopNaprave && most.nastaviDostopNaprave) && !!n && n.id !== stanje.idNaprave;
+    pokazi("gumbDostop", zna);
+    pokazi("dostopOpis", zna);
+    if (!zna) return;
+    var da = false;
+    try { da = !!most.dostopNaprave(n.id); } catch (e) {}
+    besedilo("gumbDostop", t(da ? "dostopOdvzemi" : "dostopDovoli"));
+    besedilo("dostopOpis", t(da ? "dostopDa" : "dostopNe"));
+  }
+
+  function preklopiDostop() {
+    var n = deljenje.naprava;
+    if (!n || !most || !most.nastaviDostopNaprave) return;
+    var da = false;
+    try { da = !!most.dostopNaprave(n.id); } catch (e) {}
+    most.nastaviDostopNaprave(n.id, !da);
+    narisiDostop();
   }
 
   /** Odvzem dostopa napravi s plosce: prvi pritisk vprasa, drugi odvzame. */
@@ -2273,6 +2323,7 @@
     naKlik("gumbPosljiNaNapravo", posljiNaNapravo);
     naKlik("gumbPreimenuj", odpriPreimenovanje);
     naKlik("gumbOdstrani", odstraniNapravo);
+    naKlik("gumbDostop", preklopiDostop);
     naKlik("gumbShraniIme", shraniIme);
     var vnosImena = el("vnosImena");
     if (vnosImena) vnosImena.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); shraniIme(); } });

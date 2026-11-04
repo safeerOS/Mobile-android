@@ -59,6 +59,9 @@ object Daljinec {
         }
     }
 
+    /** Odgovor napravi, ki ji ta naprava ni odprla dostopa (cast/Dostop). */
+    val NI_DOVOLJENO = Izid(false, "Ta naprava ti ni odprla dostopa. Dovoli ga na njej v Safeer Linku.", koda = "ni_dovoljeno")
+
     /** Kar zna izvesti samo odprti brskalnik. Vrne null, ce dejanja ne pozna. */
     interface VOspredju {
         fun izvediUkaz(dejanje: String, parametri: JSONObject): Izid?

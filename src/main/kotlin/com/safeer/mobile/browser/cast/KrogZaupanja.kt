@@ -75,6 +75,23 @@ class KrogZaupanja(private val shramba: HubUsmerjevalnik.Shramba? = null) {
 
     fun stevilo(): Int = clani().size
 
+    /**
+     * Ali je naprava [id] umaknjena iz kroga (nadgrobnik novejsi od vnosa; pri id-ju iz kljuca: vsi vnosi tega kljuca
+     * umaknjeni). Isto kot si.safeer.tv.cast.KrogZaupanja.jeUmaknjen - Dostop umik takoj preklice (lastnik 25. 10. 2026).
+     */
+    fun jeUmaknjen(id: String): Boolean {
+        if (id.isBlank()) return false
+        synchronized(kljucnica) {
+            val u = umiki[id]
+            val c = clani[id]
+            if (u != null && (c == null || u.umaknjeno > c.dodano)) return true
+            if (c != null || !jeIdIzKljuca(id)) return false
+            val jedro = id.take(DOLZINA_ID_IZ_KLJUCA)
+            val ujemanja = clani.values.filter { idIzKljuca(it.kljuc) == jedro }
+            return ujemanja.isNotEmpty() && ujemanja.none { jeVeljaven(it) }
+        }
+    }
+
     /** Doda ali osvezi clana. Vrne true, ce se je krog spremenil. */
     fun dodaj(clan: Clan): Boolean {
         if (clan.id.isBlank() || clan.kljuc.isBlank() || dekodirajKljuc(clan.kljuc) == null) return false

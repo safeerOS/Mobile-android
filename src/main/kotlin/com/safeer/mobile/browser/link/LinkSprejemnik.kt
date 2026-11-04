@@ -246,6 +246,9 @@ class LinkSprejemnik : Service() {
             val od = LinkVzdevki.ime(this, sporocilo.optString("sender", ""),
                 sporocilo.optString("sender_name", "").ifBlank { sporocilo.optString("sender", "naprava") })
             val tovor = sporocilo.optJSONObject("payload") ?: JSONObject()
+            // Stran ali zaslon, ki se odpre sam, samo napravi z dostopom (DostopPravila.zahtevaSporocila); besedilo in
+            // datoteka sta izrecno poslana in prosta.
+            if (!com.safeer.mobile.browser.cast.Dostop.smeSporocilo(this, sporocilo.optString("sender", ""), tip, tovor.optString("action", ""))) return
             when (tip) {
                 "cast.url" -> {
                     val url = tovor.optString("url", "").trim()
@@ -294,6 +297,11 @@ class LinkSprejemnik : Service() {
         // Posiljatelj iz sporocila huba, ne iz parametrov (zeton za datoteke je na napravo).
         try { parametri.put("_posiljatelj", posiljatelj) } catch (_: Throwable) { }
         val refId = sporocilo.optString("id", "")
+        // Tedenski pregled 4. 11. 2026: o vsebinah telefona odloca samo telefon (Dostop, kot na TV in racunalniku).
+        if (!com.safeer.mobile.browser.cast.Dostop.smeDejanje(this, posiljatelj, dejanje)) {
+            if (posiljatelj.isNotBlank()) odjemalec.posljiSporocilo(Daljinec.sporociloIzida(posiljatelj, refId, dejanje, Daljinec.NI_DOVOLJENO))
+            return
+        }
         glavnaNit.post {
             val ospredje = naUkaz
             val izid = Daljinec.izvedi(this, dejanje, parametri, ospredje, DOMACA_STRAN) { url, naslov ->
