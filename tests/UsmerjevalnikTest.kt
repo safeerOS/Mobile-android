@@ -405,6 +405,18 @@ private fun preizkusHttp() {
     preveriEnako("stari claim je 410", 410,
         u.odgovori(zahteva("POST", "/cast/pair/claim", """{"pair_id":"$pairId"}"""))?.koda)
     preveri("po starih poteh prijava ostane nedotaknjena", u.cakajocePrijave().any { it.pairId == pairId })
+    // Tedenski pregled 4. 11. 2026 (kot TV, zunanji pregled 3. 11.): preimenovani stari poti sta se dajali zeton -
+    // claim brez kode po pritisku Potrdi na gostitelju, verify s kodo po omrezju.
+    run {
+        val st = u.odgovori(zahteva("POST", "/cast/pair/start", """{"device_id":"fon9","name":"Tuj"}"""))
+        val par = polje(st!!.telo, "pair_id")
+        val koda = u.cakajocePrijave().first { it.pairId == par }.pin
+        u.potrdiPrijavo(par)
+        for (stara in listOf("/cast/pair/verify-staro-onemogoceno", "/cast/pair/claim-staro-onemogoceno")) {
+            val o = u.odgovori(zahteva("POST", stara, """{"pair_id":"$par","pin":"$koda"}"""))
+            preveri("stare poti ne dajo zetona: $stara", o == null || !(o.telo.contains("saf_tv_") || polje(o.telo, "token").isNotEmpty()))
+        }
+    }
 
     // ---- SPAKE2: koda ostane na obeh zaslonih, po omrezju gredo tocke ----
     fun seznaniSpake(pair: String, naprava: String, koda: String, odtis: String = u.lastniOdtis): Pair<Int, String> {
