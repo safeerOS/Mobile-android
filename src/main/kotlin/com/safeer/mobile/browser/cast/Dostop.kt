@@ -42,6 +42,7 @@ object Dostop {
      * Enkrat, ob prvem zagonu z dovoljenji (Application.onCreate - pred vsako storitvijo in sporocilom Linka): kljuci, ki
      * jih je ta naprava ze imela v krogu. Bere krog z diska v svoj primerek (ne v skupni KrogNaprave), commit = zapis takoj.
      */
+    @android.annotation.SuppressLint("ApplySharedPref")  // namerno commit: zapis mora biti na disku pred Linkom
     fun zapomniZnane(ctx: Context) {
         try {
             val prefs = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
