@@ -129,5 +129,8 @@ object Dostop {
             ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KLJUC_NAPRAVE, vJson(m)).apply()
         }
         Log.i(TAG, "Dostop naprave $j: ${DostopPravila.vNiz(novo).ifEmpty { "brez" }}")
+        if (Zmoznost.DATOTEKE !in novo) {
+            try { com.safeer.mobile.browser.link.DatotekeStreznik.preklici(id); com.safeer.mobile.browser.link.DatotekeStreznik.preklici(j) } catch (_: Throwable) { }
+        }
     }
 }

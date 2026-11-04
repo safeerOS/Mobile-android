@@ -41,6 +41,15 @@ pred(t, "Dostop.smeSporocilo(", "odpriVBrskalniku(", "LinkMost.prejmiDeljenje: s
 t = telo("cast/CastSenderClient.kt", '"sync.data" -> {')
 pred(t, 'Dostop.smeSporocilo(', "onSyncData?.invoke(", "CastSenderClient: sync.data brez Dostop.smeSporocilo")
 
+# S9: streznik datotek - izklop ustavi in preklice zetone, vsaka zahteva preveri stikalo in dostop imetnika zetona.
+t = telo("link/DatotekeStreznik.kt", "private fun postrezi(")
+pred(t, "vklopljeno(ctx)", "contentResolver", "DatotekeStreznik.postrezi: brez preverbe vklopljeno()")
+pred(t, "Dostop.smeDejanje(", "contentResolver", "DatotekeStreznik.postrezi: brez preverbe dostopa imetnika zetona")
+t = telo("link/DatotekeStreznik.kt", "fun ustavi()")
+pred(t, "zetoni.clear()", "tece.set(false)", "DatotekeStreznik.ustavi: zetoni ostanejo")
+t = telo("link/DatotekeStreznik.kt", "fun nastavi(context: Context, vklop: Boolean)")
+pred(t, "if (!vklop) ustavi()", "}", "DatotekeStreznik.nastavi: izklop ne ustavi streznika")
+
 # Vsak klic Daljinec.izvedi v izvorni kodi mora biti v enem od zgornjih (novega mesta brez preverbe ni).
 klici = [str(p.relative_to(SRC)) for p in SRC.rglob("*.kt") if re.search(r"Daljinec\.izvedi\(", p.read_text(encoding="utf-8"))]
 for k in klici:
