@@ -36,3 +36,7 @@ java -cp "$OUT/spake2.jar" com.safeer.mobile.browser.cast.Spake2TestKt
 "$KOTLINC" -J-Xmx2g "$SRC/DostopPravila.kt" "$TEST_DIR/DostopPravilaTest.kt" -include-runtime -d "$OUT/dostop.jar"
 java -cp "$OUT/dostop.jar" com.safeer.mobile.browser.cast.DostopPravilaTestKt
 python3 "$TEST_DIR/preveri_dostop.py"
+
+# Pripeti odtis Huba velja za https://hub/ in https://hub:443/, ne za drug gostitelj ali vrata (pregled 4. 11. 2026).
+"$KOTLINC" -J-Xmx2g "$SRC/HubNaslov.kt" "$TEST_DIR/HubNaslovTest.kt" -include-runtime -d "$OUT/hub-naslov.jar"
+java -cp "$OUT/hub-naslov.jar" com.safeer.mobile.browser.cast.HubNaslovTestKt

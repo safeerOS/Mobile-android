@@ -269,17 +269,8 @@ object HubTls {
         }
     }
 
-    /** Ali je naslov (https://gostitelj:vrata/...) naslov Huba, ki mu zaupamo. */
-    fun jeNaslovHuba(url: String, hubHttp: String): Boolean {
-        if (hubHttp.isBlank()) return false
-        return try {
-            val a = java.net.URL(url)
-            val b = java.net.URL(hubHttp)
-            a.protocol == b.protocol && a.host == b.host && a.port == b.port
-        } catch (e: Exception) {
-            false
-        }
-    }
+    /** Ali je naslov (https://gostitelj:vrata/...) naslov Huba, ki mu zaupamo (pravila v HubNaslov, preizkus brez Androida). */
+    fun jeNaslovHuba(url: String, hubHttp: String): Boolean = HubNaslov.jeNaslovHuba(url, hubHttp)
 
     fun sha256Hex(b: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it.toInt() and 0xff) }
