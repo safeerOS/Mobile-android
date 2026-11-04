@@ -103,15 +103,18 @@ object PrenosiUi {
                 return b.build()
             }
         }
+        // Samo podrocja, ki jih ponudnik streze (PonudnikPravila, tedenski pregled 4. 11. 2026): zunanja Download in
+        // notranja »prenosi« aplikacije - tja gredo prenosi in prejete datoteke (HubKrmilnik.mapaZaPrejete).
         val zunanja = try { context.getExternalFilesDir(null)?.canonicalPath } catch (_: Throwable) { null }
-        if (zunanja != null && pot.startsWith(zunanja + File.separator)) {
+        val zunanjiPrenosi = zunanja?.let { it + File.separator + PonudnikPravila.ZUNANJA_PODMAPA }
+        if (zunanja != null && zunanjiPrenosi != null && pot.startsWith(zunanjiPrenosi + File.separator)) {
             val b = Uri.Builder().scheme("content").authority(AUTHORITY).appendPath("external_files")
             pot.removePrefix(zunanja + File.separator).split('/').filter { it.isNotEmpty() }.forEach { b.appendPath(it) }
             return b.build()
         }
-        val notranja = try { context.filesDir.canonicalPath } catch (_: Throwable) { null }
+        val notranja = try { File(context.filesDir, PonudnikPravila.NOTRANJA_PODMAPA).canonicalPath } catch (_: Throwable) { null }
         if (notranja != null && pot.startsWith(notranja + File.separator)) {
-            val b = Uri.Builder().scheme("content").authority(AUTHORITY)
+            val b = Uri.Builder().scheme("content").authority(AUTHORITY).appendPath(PonudnikPravila.NOTRANJA_PODMAPA)
             pot.removePrefix(notranja + File.separator).split('/').filter { it.isNotEmpty() }.forEach { b.appendPath(it) }
             return b.build()
         }
