@@ -268,13 +268,15 @@ class QrPrijavaActivity : Activity() {
         "naslov" to mapOf(
             "sl" to "Prijava v Safeer OS", "en" to "Sign in to Safeer OS", "de" to "Bei Safeer OS anmelden",
             "es" to "Iniciar sesión en Safeer OS", "fr" to "Connexion à Safeer OS", "it" to "Accedi a Safeer OS"),
+        // Tedenski pregled 4. 11. 2026 (S11): povezavo safeer://link/qr lahko odpre katerakoli spletna stran; opozorilo, da
+        // uporabnik ne dovoli prijave tujega racunalnika, ki mu ga je podtaknila stran (kot »pridruzi« in na TV).
         "vprasanje" to mapOf(
-            "sl" to "Dovoliš računalniku »{ime}« dostop do tvojih naprav v Safeer Linku?",
-            "en" to "Allow the computer “{ime}” to access your devices in Safeer Link?",
-            "de" to "Dem Computer „{ime}“ Zugriff auf deine Geräte in Safeer Link erlauben?",
-            "es" to "¿Permitir que el ordenador «{ime}» acceda a tus dispositivos en Safeer Link?",
-            "fr" to "Autoriser l’ordinateur « {ime} » à accéder à tes appareils dans Safeer Link ?",
-            "it" to "Consentire al computer «{ime}» di accedere ai tuoi dispositivi in Safeer Link?"),
+            "sl" to "Dovoliš računalniku »{ime}« dostop do tvojih naprav v Safeer Linku?\n\nDovoli samo, če si to kodo pravkar poskeniral na zaslonu svojega računalnika.",
+            "en" to "Allow the computer “{ime}” to access your devices in Safeer Link?\n\nOnly allow this if you just scanned this code on your own computer’s screen.",
+            "de" to "Dem Computer „{ime}“ Zugriff auf deine Geräte in Safeer Link erlauben?\n\nErlaube es nur, wenn du diesen Code gerade auf dem Bildschirm deines eigenen Computers gescannt hast.",
+            "es" to "¿Permitir que el ordenador «{ime}» acceda a tus dispositivos en Safeer Link?\n\nPermítelo solo si acabas de escanear este código en la pantalla de tu propio ordenador.",
+            "fr" to "Autoriser l’ordinateur « {ime} » à accéder à tes appareils dans Safeer Link ?\n\nN’autorise que si tu viens de scanner ce code sur l’écran de ton propre ordinateur.",
+            "it" to "Consentire al computer «{ime}» di accedere ai tuoi dispositivi in Safeer Link?\n\nConsenti solo se hai appena scansionato questo codice sullo schermo del tuo computer."),
         "dovoli" to mapOf("sl" to "Dovoli", "en" to "Allow", "de" to "Erlauben", "es" to "Permitir", "fr" to "Autoriser", "it" to "Consenti"),
         "ne" to mapOf("sl" to "Ne", "en" to "No", "de" to "Nein", "es" to "No", "fr" to "Non", "it" to "No"),
         "uspeh" to mapOf(

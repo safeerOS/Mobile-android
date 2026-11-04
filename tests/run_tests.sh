@@ -54,3 +54,4 @@ java -jar "$TEST_OUTPUT/browser-state.jar"
 # Hub, SPAKE2, seznanjanje in dostop naprav (prej samo rocno; tedenski pregled 4. 11. 2026).
 KOTLINC="$KOTLINC" bash "$TEST_DIR/run_hub_tests.sh"
 bash "$TEST_DIR/run_podpis_tests.sh"
+python3 "$TEST_DIR/preveri_qr_opozorilo.py"
