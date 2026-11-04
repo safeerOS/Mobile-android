@@ -1695,21 +1695,8 @@ object UserScriptManager {
                url.startsWith("about:", ignoreCase = true)
     }
 
-    fun isGoogleDomain(url: String?): Boolean {
-        if (url.isNullOrEmpty()) return false
-        val lower = url.lowercase()
-        val host = try { Uri.parse(url).host?.lowercase() ?: "" } catch (_: Exception) { "" }
-        if (host.contains("youtube") || host.contains("googlevideo") || host.contains("ytimg")) return false
-        return host == "google.com" || host.endsWith(".google.com") ||
-               host == "google.si" || host.endsWith(".google.si") ||
-               host.contains(".google.") || host.startsWith("google.") ||
-               host.contains("recaptcha") ||
-               host.contains("gstatic.com") ||
-               host.contains("googleapis.com") ||
-               lower.contains("google.com/search") ||
-               lower.contains("google.si/search") ||
-               lower.contains("/recaptcha")
-    }
+    /** Samo po gostitelju (GooglePravila, kot TV; tedenski pregled 4. 11. 2026). */
+    fun isGoogleDomain(url: String?): Boolean = GooglePravila.jeGoogle(url)
 
     /**
      * Vrne true, če je URL stran podjetja AdGuard (ne smemo brisati njenih elementov s selektorjem .adguard-banner).
