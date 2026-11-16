@@ -56,6 +56,14 @@ object HubPairing {
     var zadnjaSeznanitev: Izid? = null
         private set
 
+    /** Stabilna koda napake, s katero je sredisce zavrnilo zadnji zacetek seznanitve (null = ni je ali ni odgovora). */
+    @Volatile
+    var zadnjaNapaka: String? = null
+        private set
+
+    /** Sredisce je povezovanje s kodo zaprlo (nekdo je ugibal kodo): uporabniku povemo, kaj naj naredi. */
+    fun kodaZaprtaPriSrediscu(): Boolean = zadnjaNapaka == "seznanitev_zaprta"
+
     @Volatile
     private var odprta: Prijava? = null
 
@@ -103,6 +111,21 @@ object HubPairing {
     }
 
     /**
+     * Ali sredisce ravno kaze 6-mestno kodo (odprto »Poveži naprave«). true/false, null = staro sredisce
+     * brez te poti ali ni odgovora. Blokira (najvec ~5 s) - klicati v ozadju.
+     */
+    fun imaOdprtoKodo(wsUrl: String): Boolean? {
+        val osnova = httpBase(wsUrl)
+        if (!osnova.startsWith("https://")) return null
+        return try {
+            val (koda, json) = post(odjemalecTofu().first, "$osnova/cast/pair/qr/odprto", JSONObject())
+            if (koda == 200 && json != null && json.has("open")) json.optBoolean("open") else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
      * Zacne seznanitev. `nacinZnan` dobi nacin in prazno kodo (kodo pokaze gostitelj);
      * vmesnik nato ponudi vnos in ga poslje s [potrdiKodo]. `koncano(false)`, ce ne gre.
      */
@@ -124,6 +147,7 @@ object HubPairing {
         }
         tece = true
         odprta = null
+        zadnjaNapaka = null
         Thread {
             try {
                 val (odjemalec, zaupnik) = odjemalecTofu()
@@ -136,7 +160,8 @@ object HubPairing {
                 val hubId = json?.optString("hub_id").orEmpty().ifBlank { HubUsmerjevalnik.IDENTITETA_HUBA }
                 val odtis = zaupnik.videni.orEmpty()
                 if (koda != 200 || pairId.isBlank() || odtis.isBlank()) {
-                    Log.w(TAG, "Prijave ni bilo mogoce zaceti (koda $koda).")
+                    zadnjaNapaka = json?.optString("code").orEmpty().ifBlank { null }
+                    Log.w(TAG, "Prijave ni bilo mogoce zaceti (koda $koda${zadnjaNapaka?.let { ", $it" } ?: ""}).")
                     tece = false
                     glavna.post { koncano(false) }
                     return@Thread
@@ -212,6 +237,9 @@ object HubPairing {
                     put("pair_id", p.pairId)
                     put("device_id", deviceId)
                     put("cb", HubUsmerjevalnik.bajteVHex(cb))
+                    val pubkey = try { HubTls.javniKljucB64() } catch (_: Throwable) { "" }
+                    if (pubkey.isNotBlank()) put("pubkey", pubkey)
+                    put("platform", HubKrmilnik.platforma(app))
                 })
                 val zeton = j2?.optString("token").orEmpty()
                 if (k2 != 200 || zeton.isBlank()) {
@@ -221,10 +249,11 @@ object HubPairing {
                     return@Thread
                 }
                 shraniZeton(app, zeton, p.odtis)
+                j2?.optJSONObject("ring")?.let { KrogNaprave.sprejmi(app, it.toString()) }
                 zadnjaSeznanitev = Izid(p.hubId, p.odtis, zeton)
                 tece = false
                 odprta = null
-                Log.i(TAG, "Naprava je seznanjena s Safeer Hubom; odtis potrdila pripet.")
+                Log.i(TAG, "Naprava je seznanjena s Safeer Hubom; odtis potrdila pripet in krog shranjen.")
                 glavna.post { izid(true, null) }
             } catch (e: Exception) {
                 Log.w(TAG, "Kode ni bilo mogoce potrditi: ${e.message}")
@@ -255,6 +284,9 @@ object HubPairing {
                     put("secret", skrivnost)
                     put("device_id", deviceId)
                     put("name", ime)
+                    val pubkey = try { HubTls.javniKljucB64() } catch (_: Throwable) { "" }
+                    if (pubkey.isNotBlank()) put("pubkey", pubkey)
+                    put("platform", HubKrmilnik.platforma(app))
                 })
                 val zeton = json?.optString("token").orEmpty()
                 if (koda != 200 || zeton.isBlank()) {
@@ -265,8 +297,9 @@ object HubPairing {
                 app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
                     .putString("hub_url", "wss://$naslov/cast/ws").putString("hub_ticket_path", "/cast/ticket").apply()
                 shraniZeton(app, zeton, odtis.lowercase())
+                json?.optJSONObject("ring")?.let { KrogNaprave.sprejmi(app, it.toString()) }
                 zadnjaSeznanitev = Izid(HubUsmerjevalnik.IDENTITETA_HUBA, odtis.lowercase(), zeton)
-                Log.i(TAG, "Naprava se je pridruzila srediscu s QR kodo; odtis potrdila pripet.")
+                Log.i(TAG, "Naprava se je pridruzila srediscu s QR kodo; odtis potrdila pripet in krog shranjen.")
                 glavna.post { izid(true, null) }
             } catch (e: Exception) {
                 Log.w(TAG, "Pridruzitev s QR kodo ni uspela: ${e.message}")
@@ -293,6 +326,54 @@ object HubPairing {
             } catch (e: Exception) {
                 Log.i(TAG, "Preklica prijave ni bilo mogoce sporociti: ${e.message}")
             }
+        }.start()
+    }
+
+    /**
+     * »Vpiši kodo z druge naprave« na napravi, ki je ze v Safeer Linku: dovoli napravo, ki kaze svojo 6-mestno
+     * kodo (prijava s QR, npr. Safeer Control na racunalniku). Najprej sredisce v tem procesu, nato sredisce, s
+     * katerim smo seznanjeni. [gotovo] dobi (uspelo, ime ali razlog) na glavni niti; razlog »qr_ne_obstaja«
+     * pomeni, da koda ni koda naprave - klicatelj potem poskusi pridruzitev s kodo sredisca.
+     */
+    fun odobriKodo(context: Context, koda: String, gotovo: (Boolean, String) -> Unit) {
+        val app = context.applicationContext
+        val glavna = Handler(Looper.getMainLooper())
+        Thread {
+            var izid: Pair<Boolean, String> = false to "qr_ne_obstaja"
+            try {
+                HubKrmilnik.usmerjevalnik?.let { u ->
+                    val (p, n) = u.odobriQr("", koda, HubKrmilnik.lastniId())
+                    izid = if (p != null) true to p.ime else false to (n ?: "qr_ne_obstaja")
+                }
+                if (!izid.first && izid.second == "qr_ne_obstaja") {
+                    val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val naslov = prefs.getString("hub_url", "") ?: ""
+                    val zeton = token(app)
+                    val odtis = prefs.getString(HubTls.KEY_HUB_FP, null)
+                    val osnova = httpBase(naslov)
+                    if (osnova.startsWith("https://") && !zeton.isNullOrBlank() && !odtis.isNullOrBlank()) {
+                        val (g, _) = HubTls.okhttp(OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS)
+                            .readTimeout(8, TimeUnit.SECONDS), odtis)
+                        val telo = JSONObject().put("qr_id", "").put("secret", koda).toString()
+                            .toRequestBody("application/json".toMediaTypeOrNull())
+                        g.build().newCall(Request.Builder().url("$osnova/cast/pair/qr/approve")
+                            .addHeader("X-Safeer-Token", zeton).post(telo).build()).execute().use { r ->
+                            val o = try { JSONObject(r.body?.string().orEmpty()) } catch (_: Exception) { JSONObject() }
+                            izid = when {
+                                r.code == 200 && o.optBoolean("approved") -> true to o.optString("name")
+                                r.code == 429 -> false to "prevec_poskusov"
+                                r.code == 409 -> false to (o.optString("code").ifBlank { "ista_naprava" })
+                                r.code == 401 || r.code == 403 -> false to "ni_seznanjena"
+                                else -> false to "qr_ne_obstaja"
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Kode naprave ni bilo mogoce potrditi: ${e.message}")
+                if (!izid.first) izid = false to "ni_huba"
+            }
+            glavna.post { gotovo(izid.first, izid.second) }
         }.start()
     }
 }

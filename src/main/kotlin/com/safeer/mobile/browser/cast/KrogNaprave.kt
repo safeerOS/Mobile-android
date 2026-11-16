@@ -27,9 +27,38 @@ object KrogNaprave {
 
     @Volatile private var krog: KrogZaupanja? = null
 
+    /**
+     * Odzivi na spremembo kroga po imenu dela aplikacije (pregled 10. 11. 2026). Prijavijo se sami: ta datoteka je
+     * Link Core (kopija na telefonu, tools/link-core-sync.sh) in razredov posamezne aplikacije ne sme poznati po imenu.
+     */
+    private val poslusalci = java.util.concurrent.ConcurrentHashMap<String, (Context) -> Unit>()
+
+    /** [odziv] se poklice ob vsaki spremembi kroga (umik, nova naprava); isto [ime] zamenja prejsnji odziv. */
+    fun obSpremembiKroga(ime: String, odziv: (Context) -> Unit) { poslusalci[ime] = odziv }
+
     @Synchronized
     fun krog(context: Context): KrogZaupanja =
-        krog ?: KrogZaupanja(Shramba(context.applicationContext)).also { krog = it }
+        krog ?: KrogZaupanja(Shramba(context.applicationContext)).also { k ->
+            // Vnose, ki jih v krog dodamo mi, podpisemo s kljucem te naprave: tako jih druge naprave
+            // preverijo tudi, kadar krog ne pride od huba (naprava, rele, internet).
+            k.lastniKljuc = try { HubTls.javniKljucB64() } catch (_: Throwable) { null }
+            k.podpisnik = { podatki -> try { HubTls.podpisi(podatki) } catch (_: Throwable) { null } }
+            // Umik naprave iz kroga ali nova naprava: Safeer Vnos sledi ozjemu krogu (link/VnosVklop).
+            val app = context.applicationContext
+            k.obSpremembi = {
+                // Grok 15, N17: najprej varnost (konec deljenja, zaupanje), nato Safeer Vnos - vsak korak posebej, napaka enega
+                // ne ustavi drugih.
+                // Umik iz kroga takoj konca deljenje zaslona umaknjeni napravi (kot na racunalniku).
+                try { si.safeer.tv.link.DeljenjeZaslonaStoritev.ustaviBrezDostopa(app) } catch (_: Throwable) { }
+                // Pregled dex-a U7: umik iz kroga izbrise »Vedno dovoli« za deljenje zaslona.
+                try { si.safeer.tv.link.ZaupanjeZaslona.pocisti(app) } catch (_: Throwable) { }
+                // Pregled 10. 11. 2026 (2.5, A): deli aplikacije, ki hranijo seje ali dovoljenja naprav (prehod interneta,
+                // Dostop), umaknjeni napravi takoj zaprejo tokove in zbrisejo zapis - vsak zase, napaka enega ne ustavi drugih.
+                for (odziv in poslusalci.values) try { odziv(app) } catch (_: Throwable) { }
+                try { si.safeer.tv.link.VnosVklop.uskladi(app, "krog") } catch (_: Throwable) { }
+            }
+            krog = k
+        }
 
     /** Ali je ta naprava (s tem id) v krogu s SVOJIM trenutnim kljucem. */
     fun jeVpisana(context: Context, id: String): Boolean {
@@ -57,16 +86,36 @@ object KrogNaprave {
     fun kljucHuba(context: Context, hubId: String): String? =
         if (hubId.isBlank()) null else krog(context).clanZaId(hubId)?.kljuc
 
+    /**
+     * Safeer OS je na televizorju prevzel Safeer Link od Safeer Browser TV (predhodnika): prevzame tudi ime,
+     * ki ga je uporabnik dal televizorju (npr. "Dnevna soba"). Brskalnik je Safeer OS dodal v krog kot
+     * sorodnika, zato ga najdemo po polju `dodal`. Ime, ki ga je uporabnik dal Safeer OS, ima prednost.
+     */
+    fun prevzemiImeTelevizorja(context: Context) {
+        val k = krog(context)
+        val nas = try { HubTls.javniKljucB64() } catch (_: Throwable) { return }
+        val clani = k.clani()
+        val nasi = clani.filter { it.kljuc == nas }
+        if (nasi.isEmpty() || nasi.any { it.imenovano > 0 }) return
+        val brskalnik = nasi.firstNotNullOfOrNull { n -> clani.firstOrNull { it.id == n.dodal && it.kljuc != nas && it.platforma == "tv" } } ?: return
+        val ime = clani.filter { it.kljuc == brskalnik.kljuc && (it.imenovano > 0 || !it.ime.startsWith("Safeer")) }
+            .maxByOrNull { it.imenovano }?.ime ?: return
+        for (n in nasi) k.preimenuj(n.id, ime)
+    }
+
     /** Kateri koli id (razen [razen]), pod katerim je nas kljuc ze v krogu (ista naprava, drug id), ali null. */
     fun znaniIdZaNasKljuc(context: Context, razen: String = ""): String? {
         val kljuc = try { HubTls.javniKljucB64() } catch (_: Throwable) { return null }
         return krog(context).clani().firstOrNull { it.kljuc == kljuc && it.id != razen }?.id
     }
 
-    /** Zdruzi krog, ki ga je poslal hub (trust.update ali odgovor na prijavo). */
+    /**
+     * Zdruzi krog, ki ga je poslal hub (trust.update ali odgovor na prijavo). Pregled 10. 11. 2026 (A): umaknjene
+     * naprave ne vrne vnos brez podpisa veljavnega clana (KrogZaupanja.zdruzi, varujUmike).
+     */
     fun sprejmi(context: Context, json: String?): Boolean {
         if (json.isNullOrBlank()) return false
-        return krog(context).zdruzi(json)
+        return krog(context).zdruzi(json, varujUmike = true)
     }
 
     /** Kaj naprava podpise ob prijavi na hub z odtisom [odtisHuba] - isto kot HubUsmerjevalnik.podatkiZaPodpis. */

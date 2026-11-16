@@ -11,12 +11,17 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.Socket
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+
+/** Pregled 12. 11. 2026 (N2): zeton toka se primerja v konstantnem casu (brez casovnega stranskega kanala na LAN). */
+internal fun enakKljuc(a: String?, b: String?): Boolean =
+    a != null && b != null && MessageDigest.isEqual(a.toByteArray(Charsets.UTF_8), b.toByteArray(Charsets.UTF_8))
 
 /**
  * Tokovi Safeer Huba: deljenje zaslona in prenos datotek.
@@ -61,6 +66,16 @@ class HubTokovi(
     /** Z eno napravo deli naenkrat ena naprava: vrne id naprave, ki cilj ze ima, ali null. */
     @Volatile var zasediCilj: ((String, String) -> String?)? = null
     @Volatile var sprostiCilj: ((String, String) -> Unit)? = null
+    /**
+     * Dotik ali poteg s strani gledalca (posiljatelj deljenja, akcija "input.tap"/"input.swipe"/
+     * "input.key", parametri kot JSON): usmerjevalnik ga posreduje gostitelju po WebSocketu, isto
+     * pot, kot bi ukaz poslala seznanjena naprava (Daljinec). Gledalec sam ni nujno seznanjen -
+     * dovoljenje mu da ze kljuc, s katerim gleda ta zaslon.
+     */
+    @Volatile var naVnosGledalca: ((String, String, String) -> Unit)? = null
+
+    /** Telo odgovora 503, kadar naprava nima virov za tok (ni_virov); krmilnik ga nastavi v jeziku uporabnika z imenom naprave. */
+    @Volatile var teloBrezVirov: () -> String = { "{\"napaka\":\"${ViriNaprave.BESEDILO_BREZ_VIROV}\",\"code\":\"${ViriNaprave.KODA}\"}" }
 
     // ------------------------------------------------------------------ zaslon
 
@@ -74,6 +89,8 @@ class HubTokovi(
     }
 
     private class Zaslon(val id: String, val kljuc: String, val posiljatelj: String) {
+        /** Znak deljenja za dotike gledalca (naprava, ki deli, ga izracuna iz istega id-ja in kljuca). */
+        val znak: String = DostopPravila.znakGledalca(id, kljuc)
         @Volatile var zadnji: ByteArray? = null
         @Volatile var tece = true
         val gledalci = CopyOnWriteArrayList<Gledalec>()
@@ -82,11 +99,18 @@ class HubTokovi(
 
     private val zasloni = ConcurrentHashMap<String, Zaslon>()
 
-    /** Deljenje se zacne z navadno zahtevo (usmerjevalnik jo poklice); vrne id in kljuc gledalca. */
+    /**
+     * Deljenje se zacne z navadno zahtevo (usmerjevalnik jo poklice); vrne id in kljuc gledalca, ali null, ce naprava
+     * nima virov ([ViriNaprave]; odgovor ni_virov). Stevilo zaslonov ni omejeno (do 0.5.90: 4) - en na posiljatelja.
+     */
     fun zacniZaslon(posiljatelj: String): Pair<String, String>? {
         // En deljen zaslon na posiljatelja: prejsnjega koncamo.
         zasloni.values.filter { it.posiljatelj == posiljatelj }.forEach { koncajZaslon(it.id) }
-        if (zasloni.size >= NAJVEC_ZASLONOV) return null
+        val razlog = ViriNaprave.preveri(1, POMNILNIK_ZASLONA)
+        if (razlog.isNotEmpty()) {
+            ViriNaprave.zabelezi(razlog, "zaslon")
+            return null
+        }
         val id = nakljucno(8)
         val kljuc = nakljucno(16)
         zasloni[id] = Zaslon(id, kljuc, posiljatelj)
@@ -97,7 +121,7 @@ class HubTokovi(
         val z = zasloni.remove(id) ?: return
         z.tece = false
         for (g in z.gledalci) g.konec = true
-        try { naKonecZaslona?.invoke(id, z.posiljatelj) } catch (_: Exception) { }
+        try { naKonecZaslona?.invoke(id, z.posiljatelj) } catch (e: Exception) { SafeerLog.napaka("Tokovi", "naKonecZaslona", e) }
     }
 
     fun zaslonTece(id: String): Boolean = zasloni[id]?.tece == true
@@ -106,7 +130,9 @@ class HubTokovi(
 
     class Datoteka(val id: String, val ime: String, val velikost: Long, val pot: File, val kljuc: String,
                    val cilj: String, val posiljatelj: String, val zaGostitelja: Boolean, val nastala: Long,
-                   val sha256: String = "") {
+                   val sha256: String = "",
+                   /** Relativna mapa pri posiljanju cele mape ("" = brez); cilj jo ustvari (share.file "dir"). */
+                   val mapa: String = "") {
         /** Pot, po kateri ciljna naprava datoteko prevzame (samo, ce ni za gostitelja). */
         fun potPrevzema(): String = "/cast/file/$id?k=$kljuc"
     }
@@ -114,11 +140,27 @@ class HubTokovi(
     private val datoteke = ConcurrentHashMap<String, Datoteka>()
     private val prenosovZdaj = AtomicInteger(0)
 
+    /**
+     * Prekinjena oddaja (izpad Wi-Fi; lastnik, 11. 10. 2026): kar je prislo, ostane na disku in odtis tece naprej;
+     * posiljatelj s HEAD /cast/file izve, koliko ze imamo, in poslje le ostanek. Kljuc: posiljatelj|cilj|sha|velikost.
+     */
+    private class Delna(val pot: File, val ime: String, val mapa: String, val zaGostitelja: Boolean, val ciljnaMapa: File) {
+        var prejeto = 0L
+        val prstni: java.security.MessageDigest = java.security.MessageDigest.getInstance("SHA-256")
+        @Volatile var cas = 0L
+        var vTeku = false
+    }
+    private val delne = ConcurrentHashMap<String, Delna>()
+    private fun kljucDelne(posiljatelj: String, cilj: String, sha: String, skupaj: Long) = "$posiljatelj|$cilj|$sha|$skupaj"
+
     fun datoteka(id: String): Datoteka? = datoteke[id]
 
     /** Datoteke, ki jih nihce ni prevzel, pospravimo; klice se obcasno. */
     fun pocistiDatoteke() {
         val zdaj = ura()
+        for ((k, d) in delne) {
+            if (!d.vTeku && zdaj - d.cas > DATOTEKA_VELJA_MS && delne.remove(k, d)) try { d.pot.delete() } catch (_: Exception) { }
+        }
         for ((id, d) in datoteke) {
             if (zdaj - d.nastala > DATOTEKA_VELJA_MS) {
                 datoteke.remove(id)
@@ -129,6 +171,10 @@ class HubTokovi(
 
     // ------------------------------------------------------------------ HTTP tokovi
 
+    /** Poti streznika datotek te naprave pod /cast (isti seznam kot DatotekeStreznik.jePotPrekHuba). */
+    private fun jePotStreznikaDatotek(pot: String): Boolean =
+        pot.startsWith("/cast/d/") || pot.startsWith("/cast/thumb/") || pot.startsWith("/cast/live/") || pot.startsWith("/cast/magnet/")
+
     /**
      * Prevzame tokovne zahteve. Vrne true, ce je odgovoril sam (tudi z napako).
      *   PUT  /cast/file?name=&target=&from=      telo = datoteka; zeton v glavi
@@ -136,6 +182,7 @@ class HubTokovi(
      *   POST /cast/screen/{id}?k=                tok okvirjev: 4 bajti dolzine + JPEG, ponavljaj
      *   GET  /cast/screen/{id}/stream?k=         MJPEG za gledalca
      *   GET  /cast/screen/{id}/view?k=           HTML stran gledalca (za televizor/brskalnik)
+     *   POST /cast/screen/{id}/input?k=          dotik/poteg gledalca nazaj h gostitelju
      */
     fun obdelaj(zahteva: HubStreznik.Zahteva, vhod: InputStream, izhod: OutputStream, vticnica: Socket): Boolean {
         val pot = zahteva.pot
@@ -146,9 +193,16 @@ class HubTokovi(
         }
         return when {
             pot == "/cast/file" && zahteva.metoda == "PUT" -> { sprejmiDatoteko(zahteva, vhod, izhod); true }
+            pot == "/cast/file" && zahteva.metoda == "HEAD" -> { odmikOddaje(zahteva, izhod); true }
             pot.startsWith("/cast/file/") && zahteva.metoda == "GET" -> { posljiDatoteko(zahteva, izhod); true }
+            // Poti streznika datotek te naprave prek Huba (Global Link pripelje samo do vrat Huba): datoteka, slicica,
+            // urejanje (POST), sprotni tok in tok torrenta - z istim zetonom in istimi pravili kot doma.
+            jePotStreznikaDatotek(pot) &&
+                (zahteva.metoda == "GET" || zahteva.metoda == "HEAD" || zahteva.metoda == "POST") ->
+                si.safeer.tv.link.DatotekeStreznik.prekHuba(zahteva.metoda, pot, zahteva.glave, vhod, izhod, zahteva.poizvedba)
             pot.startsWith("/cast/screen/") && pot.endsWith("/stream") && zahteva.metoda == "GET" -> { gledajZaslon(zahteva, izhod, vticnica); true }
             pot.startsWith("/cast/screen/") && pot.endsWith("/view") && zahteva.metoda == "GET" -> { stranGledalca(zahteva, izhod); true }
+            pot.startsWith("/cast/screen/") && pot.endsWith("/input") && zahteva.metoda == "POST" -> { vnosVZaslon(zahteva, vhod, izhod); true }
             pot.startsWith("/cast/screen/") && zahteva.metoda == "POST" -> { sprejmiZaslon(zahteva, vhod, izhod, vticnica); true }
             else -> false
         }
@@ -159,7 +213,7 @@ class HubTokovi(
     private fun sprejmiZaslon(zahteva: HubStreznik.Zahteva, vhod: InputStream, izhod: OutputStream, vticnica: Socket) {
         val id = zahteva.pot.removePrefix("/cast/screen/").substringBefore('/')
         val z = zasloni[id]
-        if (z == null || z.kljuc != zahteva.poizvedba["k"]) {
+        if (z == null || !enakKljuc(z.kljuc, zahteva.poizvedba["k"])) {
             odgovori(izhod, 404, "{\"napaka\":\"tega deljenja ni\"}")
             return
         }
@@ -200,12 +254,15 @@ class HubTokovi(
     private fun gledajZaslon(zahteva: HubStreznik.Zahteva, izhod: OutputStream, vticnica: Socket) {
         val id = zahteva.pot.removePrefix("/cast/screen/").substringBefore('/')
         val z = zasloni[id]
-        if (z == null || z.kljuc != zahteva.poizvedba["k"] || !z.tece) {
+        if (z == null || !enakKljuc(z.kljuc, zahteva.poizvedba["k"]) || !z.tece) {
             odgovori(izhod, 404, "{\"napaka\":\"tega deljenja ni\"}")
             return
         }
-        if (z.gledalci.size >= NAJVEC_GLEDALCEV) {
-            odgovori(izhod, 503, "{\"napaka\":\"preveč gledalcev\"}")
+        // Gledalcev ni omejeno stevilo (do 0.5.90: 4), samo viri naprave: vsak drzi vrsto do VRSTA_GLEDALCA okvirjev.
+        val razlog = ViriNaprave.preveri(1, POMNILNIK_GLEDALCA)
+        if (razlog.isNotEmpty()) {
+            ViriNaprave.zabelezi(razlog, "gledalec")
+            odgovoriBrezVirov(izhod)
             return
         }
         val g = Gledalec()
@@ -236,15 +293,83 @@ class HubTokovi(
         val id = zahteva.pot.removePrefix("/cast/screen/").substringBefore('/')
         val z = zasloni[id]
         val kljuc = zahteva.poizvedba["k"] ?: ""
-        if (z == null || z.kljuc != kljuc) {
+        if (z == null || !enakKljuc(z.kljuc, kljuc)) {
             odgovori(izhod, 404, STRAN_KONEC, "text/html; charset=utf-8")
             return
         }
-        val html = STRAN_GLEDALCA.replace("%%TOK%%", "/cast/screen/$id/stream?k=$kljuc")
+        val html = STRAN_GLEDALCA
+            .replace("%%TOK%%", "/cast/screen/$id/stream?k=$kljuc")
+            .replace("%%VNOS%%", "/cast/screen/$id/input?k=$kljuc")
         odgovori(izhod, 200, html, "text/html; charset=utf-8")
     }
 
+    /**
+     * Dotik ali poteg gledalca: telo je majhen JSON ({"vrsta":"tap",x,y} ali {"vrsta":"swipe",...}
+     * ali {"vrsta":"key",key}), kljuc gledalca je isti kot za sliko - posebne seznanitve gledalec ne
+     * potrebuje. Posredujemo naprej h gostitelju (isti ukaz, kot bi ga poslala seznanjena naprava);
+     * odgovorimo takoj, brez cakanja na izvedbo, da dotik na sliki ostane odziven.
+     */
+    private fun vnosVZaslon(zahteva: HubStreznik.Zahteva, vhod: InputStream, izhod: OutputStream) {
+        val id = zahteva.pot.removePrefix("/cast/screen/").substringBefore('/')
+        val z = zasloni[id]
+        if (z == null || !enakKljuc(z.kljuc, zahteva.poizvedba["k"]) || !z.tece) {
+            odgovori(izhod, 404, "{\"napaka\":\"tega deljenja ni\"}")
+            return
+        }
+        val dolzina = (zahteva.glave["content-length"] ?: "").toIntOrNull() ?: 0
+        if (dolzina <= 0 || dolzina > NAJVECJI_VNOS) {
+            odgovori(izhod, 400, "{\"napaka\":\"neveljavno telo\"}")
+            return
+        }
+        val telo = ByteArray(dolzina)
+        if (!preberiTocno(vhod, telo, dolzina)) {
+            odgovori(izhod, 400, "{\"napaka\":\"telo je prekinjeno\"}")
+            return
+        }
+        try {
+            val o = org.json.JSONObject(String(telo, Charsets.UTF_8))
+            val (akcija, parametri) = when (o.optString("vrsta", "")) {
+                "tap" -> "input.tap" to org.json.JSONObject().put("x", o.optDouble("x")).put("y", o.optDouble("y"))
+                "swipe" -> "input.swipe" to org.json.JSONObject()
+                    .put("x1", o.optDouble("x1")).put("y1", o.optDouble("y1"))
+                    .put("x2", o.optDouble("x2")).put("y2", o.optDouble("y2"))
+                    .put("ms", o.optLong("ms", 220L).coerceIn(60L, 1500L))
+                "key" -> "input.key" to org.json.JSONObject().put("key", o.optString("key", "").take(24))
+                else -> null to null
+            }
+            // Znak deljenja doloci sredisce (ne telo zahteve): gostitelj po njem ve, da dotik prihaja od tod.
+            if (akcija != null && parametri != null) naVnosGledalca?.invoke(z.posiljatelj, akcija,
+                parametri.put(DostopPravila.PARAM_ZNAK_GLEDALCA, z.znak).toString())
+        } catch (_: Exception) {
+            // Slabo oblikovan dotik ne sme podreti gledanja - preprosto ga izpustimo.
+        }
+        odgovori(izhod, 200, "{\"ok\":true}")
+    }
+
     // ---- datoteke ----
+
+    /** HEAD /cast/file?target=&sha256=&size=: koliko te datoteke ze imamo od prekinjene oddaje (x-safeer-offset). */
+    private fun odmikOddaje(zahteva: HubStreznik.Zahteva, izhod: OutputStream) {
+        val zeton = zahteva.glave["x-safeer-token"]
+        val veljaven = jeVeljavenZeton(zeton)
+        pocistiDatoteke()
+        var odmik = 0L
+        if (veljaven) {
+            val posiljatelj = (napravaZeZetona?.invoke(zeton) ?: zahteva.poizvedba["from"] ?: "").take(64)
+            val cilj = (zahteva.poizvedba["target"] ?: "").take(64)
+            val sha = (zahteva.poizvedba["sha256"] ?: "").trim().lowercase()
+            val velikost = zahteva.poizvedba["size"]?.toLongOrNull() ?: -1L
+            val d = delne[kljucDelne(posiljatelj, cilj, sha, velikost)]
+            // Ob izpadu povezave Hub se nekaj casa bere, kar je ze na poti (in pise na pocasen disk): posiljatelj, ki
+            // vprasa takoj, bi dobil 0 in poslal vse znova (izmerjeno 11. 10. 2026: 302 MB presezka). Pocakamo do 10 s.
+            var cakano = 0
+            while (d != null && d.vTeku && cakano < CAKANJE_DELNE_MS) { Thread.sleep(100); cakano += 100 }
+            if (d != null && !d.vTeku) odmik = d.prejeto
+        }
+        izhod.write(("HTTP/1.1 ${if (veljaven) "200 OK" else "401 Unauthorized"}\r\nx-safeer-offset: $odmik\r\n" +
+            "x-safeer-resume: 1\r\nContent-Length: 0\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
+        izhod.flush()
+    }
 
     private fun sprejmiDatoteko(zahteva: HubStreznik.Zahteva, vhod: InputStream, izhod: OutputStream) {
         val zeton = zahteva.glave["x-safeer-token"]
@@ -254,21 +379,29 @@ class HubTokovi(
         }
         val ime = varnoIme(zahteva.poizvedba["name"] ?: "")
         val cilj = (zahteva.poizvedba["target"] ?: "").take(64)
+        val podmapa = varnaMapa(zahteva.poizvedba["dir"] ?: "")
         // Posiljatelj je lastnik zetona; "from" v poizvedbi velja le, ce Hub zetonov ne veze.
         val posiljatelj = (napravaZeZetona?.invoke(zeton) ?: zahteva.poizvedba["from"] ?: "").take(64)
         val dolzina = zahteva.glave["content-length"]?.toLongOrNull() ?: -1L
+        // Nadaljevanje: x-safeer-size (cela datoteka) in x-safeer-offset (od kod). Brez njiju vse kot prej.
+        val skupajGlava = zahteva.glave["x-safeer-size"]?.toLongOrNull()
+        val nadaljevanje = skupajGlava != null
+        val skupaj = skupajGlava ?: dolzina
+        val odmik = if (nadaljevanje) (zahteva.glave["x-safeer-offset"]?.toLongOrNull() ?: 0L).coerceAtLeast(0L) else 0L
+        val napovedan = zahteva.glave["x-safeer-sha256"]?.trim()?.lowercase().orEmpty()
         if (ime.isEmpty() || cilj.isEmpty() || dolzina < 0) {
             odgovori(izhod, 400, "{\"napaka\":\"manjka ime, cilj ali dolžina\"}")
             return
         }
-        if (dolzina > NAJVECJA_DATOTEKA) {
+        if (odmik + dolzina != skupaj || (odmik > 0 && napovedan.isEmpty())) {
+            odgovori(izhod, 400, "{\"napaka\":\"dolžina se ne ujema\",\"koda\":\"napacna_dolzina\"}")
+            return
+        }
+        if (skupaj > NAJVECJA_DATOTEKA) {
             odgovori(izhod, 413, "{\"napaka\":\"datoteka je prevelika\"}")
             return
         }
-        if (prenosovZdaj.get() >= NAJVEC_PRENOSOV) {
-            odgovori(izhod, 503, "{\"napaka\":\"preveč hkratnih prenosov\"}")
-            return
-        }
+        if (!viriZaPrenos(izhod)) return
         val zaGostitelja = cilj == lastniId()
         if (!zaGostitelja && jeCiljPovezan?.invoke(cilj) == false) {
             odgovori(izhod, 404, "{\"napaka\":\"ciljna naprava ni povezana\",\"koda\":\"naprava_ni_povezana\"}")
@@ -284,89 +417,149 @@ class HubTokovi(
             odgovori(izhod, 507, "{\"napaka\":\"ni dovolj prostora\"}")
             return
         }
+        val kljucD = if (nadaljevanje && napovedan.isNotEmpty()) kljucDelne(posiljatelj, cilj, napovedan, skupaj) else null
+        var delna: Delna? = null
+        synchronized(delne) {
+            val obstojeca = kljucD?.let { delne[it] }
+            if (odmik > 0 && (obstojeca == null || obstojeca.vTeku || obstojeca.prejeto != odmik)) {
+                val imamo = if (obstojeca == null || obstojeca.vTeku) 0L else obstojeca.prejeto
+                odgovori(izhod, 409, "{\"napaka\":\"nadaljevanje se ne ujema\",\"koda\":\"napacen_odmik\",\"odmik\":$imamo}")
+                return
+            }
+            if (obstojeca != null && obstojeca.vTeku) {
+                odgovori(izhod, 409, "{\"napaka\":\"ta datoteka se že sprejema\",\"koda\":\"ze_v_teku\",\"odmik\":0}")
+                return
+            }
+            if (obstojeca != null && odmik == 0L) {
+                delne.remove(kljucD); try { obstojeca.pot.delete() } catch (_: Exception) { }
+            } else if (obstojeca != null) {
+                obstojeca.vTeku = true; delna = obstojeca
+            }
+            Unit
+        }
         // Med prenosom je cilj zaseden za to napravo: nihce drug mu medtem ne poslje nicesar.
         zasediCilj?.invoke(cilj, posiljatelj)?.let { kdo ->
+            delna?.vTeku = false
             odgovori(izhod, 409, "{\"napaka\":\"z napravo trenutno deli druga naprava\",\"koda\":\"naprava_zasedena\",\"busy_by\":\"${ubezi(kdo)}\"}")
             return
         }
-        val cilja = enolicnaPot(mapa, if (zaGostitelja) ime else nakljucno(6) + "-" + ime)
-        val id = nakljucno(8)
-        val kljuc = nakljucno(16)
+        val d0 = delna ?: run {
+            // Za gostitelja v mapo prenosov (z mapo posiljatelja), sicer zacasno; do konca z ».safeer-delno«.
+            val ciljnaMapa = if (zaGostitelja) podmapaVarno(mapa, podmapa) else mapa
+            // A8 (5. 11. 2026): ime zasedeno atomarno (createNewFile), brez simbolnih povezav, ostane v mapi.
+            // CodeRabbit 5. 11. 2026: zasediIme lahko vrze (ime ni v mapi, disk poln, mapa ni mapa) - cilj, zaseden zgoraj, mora biti
+            // sproscen tudi takrat, sicer naprava ostane zasedena do ponovnega zagona.
+            val pot = try {
+                zasediIme(ciljnaMapa.canonicalFile, if (zaGostitelja) "$ime.safeer-delno" else nakljucno(6) + "-" + ime)
+            } catch (_: Exception) {
+                // Tudi SecurityException (ne le IOException) bi pustila cilj zaseden.
+                sprostiCilj?.invoke(cilj, posiljatelj)
+                odgovori(izhod, 500, "{\"napaka\":\"datoteke ni mogoce shraniti\",\"koda\":\"shranjevanje\"}")
+                return
+            }
+            Delna(pot, ime, podmapa, zaGostitelja, ciljnaMapa).also {
+                it.vTeku = true; it.cas = ura()
+                if (kljucD != null) delne[kljucD] = it
+            }
+        }
         prenosovZdaj.incrementAndGet()
-        var prejeto = 0L
-        val prstni = java.security.MessageDigest.getInstance("SHA-256")
+        var prekinjeno = false
         try {
-            FileOutputStream(cilja).use { out ->
+            java.io.RandomAccessFile(d0.pot, "rw").use { out ->
+                out.seek(d0.prejeto); out.setLength(d0.prejeto)
                 val kos = ByteArray(KOS)
-                while (prejeto < dolzina) {
-                    val n = vhod.read(kos, 0, minOf(kos.size.toLong(), dolzina - prejeto).toInt())
+                val konec = d0.prejeto + dolzina
+                while (d0.prejeto < konec) {
+                    val n = vhod.read(kos, 0, minOf(kos.size.toLong(), konec - d0.prejeto).toInt())
                     if (n < 0) break
                     out.write(kos, 0, n)
-                    prstni.update(kos, 0, n)
-                    prejeto += n
+                    d0.prstni.update(kos, 0, n)
+                    d0.prejeto += n
+                    d0.cas = ura()
                 }
             }
         } catch (e: IOException) {
-            try { cilja.delete() } catch (_: Exception) { }
+            prekinjeno = true
+        } finally {
             prenosovZdaj.decrementAndGet()
             sprostiCilj?.invoke(cilj, posiljatelj)
-            odgovori(izhod, 500, "{\"napaka\":\"prenos prekinjen\"}")
+        }
+        if (prekinjeno || d0.prejeto != skupaj) {
+            if (kljucD != null && d0.prejeto < skupaj) {
+                d0.vTeku = false            // pocaka na nadaljevanje (pocistiDatoteke po eni uri)
+                odgovori(izhod, if (prekinjeno) 500 else 400,
+                    "{\"napaka\":\"${if (prekinjeno) "prenos prekinjen" else "datoteka ni prišla cela"}\",\"odmik\":${d0.prejeto}}")
+                return
+            }
+            if (kljucD != null) delne.remove(kljucD, d0)
+            try { d0.pot.delete() } catch (_: Exception) { }
+            odgovori(izhod, if (prekinjeno) 500 else 400, "{\"napaka\":\"${if (prekinjeno) "prenos prekinjen" else "datoteka ni prišla cela"}\"}")
             return
         }
-        prenosovZdaj.decrementAndGet()
-        sprostiCilj?.invoke(cilj, posiljatelj)
-        if (prejeto != dolzina) {
-            try { cilja.delete() } catch (_: Exception) { }
-            odgovori(izhod, 400, "{\"napaka\":\"datoteka ni prišla cela\"}")
-            return
-        }
-        val sha256 = prstni.digest().joinToString("") { String.format("%02x", it.toInt() and 0xFF) }
+        if (kljucD != null) delne.remove(kljucD, d0)
+        val sha256 = d0.prstni.digest().joinToString("") { String.format("%02x", it.toInt() and 0xFF) }
         // Ce je posiljatelj prstni odtis napovedal, se mora ujemati; sicer datoteke ne obdrzimo.
-        val napovedan = zahteva.glave["x-safeer-sha256"]?.trim()?.lowercase()
-        if (!napovedan.isNullOrEmpty() && napovedan != sha256) {
-            try { cilja.delete() } catch (_: Exception) { }
+        if (napovedan.isNotEmpty() && napovedan != sha256) {
+            try { d0.pot.delete() } catch (_: Exception) { }
             odgovori(izhod, 400, "{\"napaka\":\"prstni odtis se ne ujema\",\"koda\":\"napacen_odtis\"}")
             return
         }
-        val d = Datoteka(id, cilja.name, prejeto, cilja, kljuc, cilj, posiljatelj, zaGostitelja, ura(), sha256)
+        // Za gostitelja dobi datoteka koncno ime sele zdaj (nepopolne uporabnik v Prenosih ne vidi).
+        // Koncno ime zasedemo atomarno in preimenujemo (A8, 5. 11. 2026); prej enolicnaPot (exists) in copyTo cez cilj.
+        val koncna = if (d0.zaGostitelja) try { vKoncnoIme(d0.pot, d0.ciljnaMapa, d0.ime) } catch (e: IOException) {
+            try { d0.pot.delete() } catch (_: Exception) { }
+            odgovori(izhod, 500, "{\"napaka\":\"datoteke ni mogoce shraniti\"}")
+            return
+        } else d0.pot
+        val id = nakljucno(8)
+        val kljuc = nakljucno(16)
+        // Zacasna datoteka ima nakljucno predpono (vec hkratnih prenosov z istim imenom); prejemnik pa
+        // dobi izvirno ime, kot ga je poslal posiljatelj (podvojitve razresi sam, v svoji mapi).
+        val d = Datoteka(id, if (d0.zaGostitelja) koncna.name else d0.ime, skupaj, koncna, kljuc, cilj, posiljatelj,
+            d0.zaGostitelja, ura(), sha256, d0.mapa)
         datoteke[id] = d
-        if (zaGostitelja) {
-            try { naPrejetoDatoteko(d.ime, cilja) } catch (_: Exception) { }
+        if (d0.zaGostitelja) {
+            try { naPrejetoDatoteko(d.ime, koncna) } catch (e: Exception) { SafeerLog.napaka("Tokovi", "prejeta datoteka ni oddana", e) }
         }
         // Ciljni napravi pove Hub (share.file), posiljatelj je s tem opravil.
-        try { naDatoteko?.invoke(d) } catch (_: Exception) { }
-        odgovori(izhod, 200, "{\"id\":\"$id\",\"name\":\"${ubezi(d.ime)}\",\"size\":$prejeto,\"key\":\"$kljuc\",\"for_host\":$zaGostitelja,\"sha256\":\"$sha256\"}")
+        try { naDatoteko?.invoke(d) } catch (e: Exception) { SafeerLog.napaka("Tokovi", "naDatoteko", e) }
+        odgovori(izhod, 200, "{\"id\":\"$id\",\"name\":\"${ubezi(d.ime)}\",\"size\":$skupaj,\"key\":\"$kljuc\",\"for_host\":${d0.zaGostitelja},\"sha256\":\"$sha256\"}")
     }
 
     private fun posljiDatoteko(zahteva: HubStreznik.Zahteva, izhod: OutputStream) {
         val id = zahteva.pot.removePrefix("/cast/file/").substringBefore('/')
         val d = datoteke[id]
-        if (d == null || d.kljuc != zahteva.poizvedba["k"] || !d.pot.isFile) {
+        if (d == null || !enakKljuc(d.kljuc, zahteva.poizvedba["k"]) || !d.pot.isFile) {
             odgovori(izhod, 404, "{\"napaka\":\"te datoteke ni\"}")
             return
         }
-        if (prenosovZdaj.get() >= NAJVEC_PRENOSOV) {
-            odgovori(izhod, 503, "{\"napaka\":\"preveč hkratnih prenosov\"}")
-            return
-        }
+        if (!viriZaPrenos(izhod)) return
+        val velikost = d.pot.length()
+        // Cilj nadaljuje prekinjen prevzem (Range: bytes=N-): samo se manjkajoci del.
+        val zacetek = zacetekObsega(zahteva.glave["range"].orEmpty(), velikost)
         prenosovZdaj.incrementAndGet()
         try {
-            izhod.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n" +
-                "Content-Length: ${d.pot.length()}\r\n" +
+            val glava = if (zacetek > 0) "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes $zacetek-${velikost - 1}/$velikost\r\n"
+                        else "HTTP/1.1 200 OK\r\n"
+            izhod.write((glava + "Accept-Ranges: bytes\r\nContent-Type: application/octet-stream\r\n" +
+                "Content-Length: ${velikost - zacetek}\r\n" +
                 "x-safeer-sha256: ${d.sha256}\r\n" +
                 "Content-Disposition: attachment; filename=\"${ubezi(d.ime)}\"\r\n" +
                 "Cache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray(Charsets.UTF_8))
+            var poslano = 0L
             FileInputStream(d.pot).use { vhodDat ->
+                if (zacetek > 0) vhodDat.channel.position(zacetek)
                 val kos = ByteArray(KOS)
                 while (true) {
                     val n = vhodDat.read(kos)
                     if (n < 0) break
                     izhod.write(kos, 0, n)
+                    poslano += n
                 }
             }
             izhod.flush()
             // Prevzeta zacasna datoteka je opravila svoje.
-            if (d.pot.parentFile == mapaZacasna()) {
+            if (zacetek + poslano == velikost && d.pot.parentFile == mapaZacasna()) {
                 datoteke.remove(id)
                 try { d.pot.delete() } catch (_: Exception) { }
             }
@@ -393,7 +586,7 @@ class HubTokovi(
         val opis = when (koda) {
             200 -> "OK"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 403 -> "Forbidden"
             404 -> "Not Found"; 413 -> "Payload Too Large"; 500 -> "Internal Server Error"
-            503 -> "Service Unavailable"; 507 -> "Insufficient Storage"; else -> "OK"
+            409 -> "Conflict"; 503 -> "Service Unavailable"; 507 -> "Insufficient Storage"; else -> "OK"
         }
         izhod.write(("HTTP/1.1 $koda $opis\r\nContent-Type: $vrsta\r\nContent-Length: ${bajti.size}\r\n" +
             "Cache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
@@ -401,17 +594,39 @@ class HubTokovi(
         izhod.flush()
     }
 
+    /**
+     * Hkratnih prenosov ni omejeno stevilo (do 0.5.90: 3 za vse naprave skupaj), samo viri naprave: datoteka (deskriptor)
+     * in medpomnilnik [KOS] z rezervo - [POMNILNIK_PRENOSA]. Brez virov 503 s kodo ni_virov; naprava poskusi znova.
+     */
+    private fun viriZaPrenos(izhod: OutputStream): Boolean {
+        val razlog = ViriNaprave.preveri(1, POMNILNIK_PRENOSA)
+        if (razlog.isEmpty()) return true
+        ViriNaprave.zabelezi(razlog, "prenos")
+        odgovoriBrezVirov(izhod)
+        return false
+    }
+
+    private fun odgovoriBrezVirov(izhod: OutputStream) =
+        odgovori(izhod, 503, try { teloBrezVirov() } catch (_: Throwable) { "{\"code\":\"${ViriNaprave.KODA}\"}" })
+
     private fun ubezi(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
 
     companion object {
-        const val NAJVEC_ZASLONOV = 4
-        const val NAJVEC_GLEDALCEV = 4
         const val VRSTA_GLEDALCA = 2
         const val NAJVECJI_OKVIR = 2 * 1024 * 1024
-        const val NAJVEC_PRENOSOV = 3
-        const val NAJVECJA_DATOTEKA = 4L * 1024 * 1024 * 1024
+        /** Viri za eno deljenje zaslona (zadnji okvir in sprejem naslednjega) in enega gledalca (njegova vrsta okvirjev). */
+        const val POMNILNIK_ZASLONA = 2L * NAJVECJI_OKVIR
+        const val POMNILNIK_GLEDALCA = VRSTA_GLEDALCA.toLong() * NAJVECJI_OKVIR
+        /** Viri za en prenos datoteke: medpomnilnik KOS z rezervo, kot na racunalniku (link_hub_deljenje). */
+        const val POMNILNIK_PRENOSA = 1024L * 1024
+        /** Telo POST .../input je majhen JSON - nekaj deset bajtov; ta meja je ze zelo velikodusna. */
+        const val NAJVECJI_VNOS = 2 * 1024
+        /** Prej 4 GB; datoteka gre na disk v koscih, meja je prostor na disku (lastnik, 11. 10. 2026). */
+        const val NAJVECJA_DATOTEKA = 1024L * 1024 * 1024 * 1024
         const val REZERVA_PROSTORA = 200L * 1024 * 1024
         const val DATOTEKA_VELJA_MS = 60 * 60 * 1000L
+        /** Koliko HEAD /cast/file najvec pocaka, da prekinjena oddaja dokonca branje (potem pove pravi odmik). */
+        const val CAKANJE_DELNE_MS = 10_000
         const val KOS = 64 * 1024
         private const val MEJA = "safeerokvir"
 
@@ -432,6 +647,87 @@ class HubTokovi(
 
         /** Kot na namizju: ime (1).ext, ce datoteka ze obstaja - dve hkratni ne pisieta ena cez drugo. */
         @Synchronized
+        /** Relativna mapa (posiljanje cele mape): varna imena, brez »..« in skritih map; najvec 16 ravni. */
+        fun varnaMapa(mapa: String): String = mapa.replace('\\', '/').split('/')
+            .map { it.trim().trimStart('.') }.filter { it.isNotEmpty() }.map { varnoIme(it) }
+            .take(16).joinToString("/").take(400)
+
+        /** Podmapa v `koren` (ustvari jo); ce bi pot vodila ven, ostane koren. */
+        fun podmapaVarno(koren: File, podmapa: String): File {
+            if (podmapa.isEmpty()) return koren
+            val cilj = File(koren, podmapa)
+            return try {
+                if (!cilj.canonicalPath.startsWith(koren.canonicalPath + File.separator)) koren
+                else { cilj.mkdirs(); cilj }
+            } catch (_: Exception) { koren }
+        }
+
+        /** Range: bytes=N- -> N; brez glave, druga oblika ali zunaj datoteke -> 0 (cela). */
+        fun zacetekObsega(glava: String, velikost: Long): Long {
+            val g = glava.trim().lowercase()
+            if (!g.startsWith("bytes=") || g.contains(',')) return 0L
+            val deli = g.removePrefix("bytes=").split('-')
+            if (deli.size != 2 || deli[1].isNotBlank()) return 0L
+            val n = deli[0].trim().toLongOrNull() ?: return 0L
+            return if (n in 1 until velikost) n else 0L
+        }
+
+        /**
+         * Pregled 5. 11. 2026 (A8): prejeto datoteko zapisemo v zacasno ».part«, ustvarjeno z createNewFile (nikoli cez
+         * obstojeco datoteko ali simbolno povezavo), in jo sele cela preimenujemo v koncno ime, ki ga prav tako
+         * zasedemo s createNewFile (dve hkratni ne dobita istega imena; enolicnaPot je med exists() in pisanjem
+         * dopuscala oboje). Ime je samo varnoIme, realpath cilja mora ostati v mapi. Ce [pisi] vrze (prekinjen prenos,
+         * napacen odtis), ne ostane nic. Vrne koncno datoteko. (Telefon: PrevzemDatoteke.)
+         */
+        fun shraniVMapo(mapa: File, zelenoIme: String, pisi: (OutputStream) -> Unit): File {
+            val koren = mapa.canonicalFile
+            val ime = varnoIme(zelenoIme)
+            val zacasna = File(koren, ".safeer-" + nakljucno(8) + ".part")
+            if (!vMapi(koren, zacasna) || !zacasna.createNewFile()) throw IOException("zacasne datoteke ni mogoce ustvariti")
+            var cilj: File? = null
+            try {
+                FileOutputStream(zacasna).use { pisi(it) }
+                cilj = zasediIme(koren, ime)
+                if (!zacasna.renameTo(cilj)) throw IOException("datoteke ni mogoce preimenovati")
+                return cilj
+            } catch (e: Throwable) {
+                try { zacasna.delete() } catch (_: Exception) { }
+                // Zasedeno (prazno) koncno ime sprostimo, ce preimenovanje ni uspelo.
+                try { if (cilj != null && cilj.length() == 0L) cilj.delete() } catch (_: Exception) { }
+                throw e
+            }
+        }
+
+        /**
+         * Cela prejeta datoteka [delna] (odtis je ze preverjen) dobi koncno [zelenoIme] v [mapa]: ime zasedeno atomarno,
+         * brez simbolne povezave, v mapi; ob neuspehu se zasedeno prazno ime sprosti in [delna] ostane (klicatelj jo pobrise).
+         */
+        fun vKoncnoIme(delna: File, mapa: File, zelenoIme: String): File {
+            val koren = mapa.canonicalFile
+            val cilj = zasediIme(koren, varnoIme(zelenoIme))
+            if (!delna.renameTo(cilj)) {
+                try { if (cilj.length() == 0L) cilj.delete() } catch (_: Exception) { }
+                throw IOException("datoteke ni mogoce preimenovati")
+            }
+            return cilj
+        }
+
+        private fun vMapi(koren: File, f: File): Boolean = f.canonicalFile.parentFile == koren
+
+        /** Kot enolicnaPot (ime (1).ext), a ime zasede atomarno (createNewFile); simbolne povezave se izogne. */
+        fun zasediIme(koren: File, ime: String): File {
+            val pika = ime.lastIndexOf('.')
+            val osnova = if (pika > 0) ime.substring(0, pika) else ime
+            val koncnica = if (pika > 0) ime.substring(pika) else ""
+            for (i in 0..9999) {
+                val kandidat = File(koren, if (i == 0) ime else "$osnova ($i)$koncnica")
+                if (java.nio.file.Files.isSymbolicLink(kandidat.toPath())) continue
+                if (!vMapi(koren, kandidat)) throw IOException("ime ni v mapi")
+                if (kandidat.createNewFile()) return kandidat
+            }
+            throw IOException("ni prostega imena")
+        }
+
         fun enolicnaPot(mapa: File, ime: String): File {
             var kandidat = File(mapa, ime)
             if (!kandidat.exists()) return kandidat
@@ -446,18 +742,45 @@ class HubTokovi(
             return kandidat
         }
 
-        /** Gledalec: crno ozadje, slika umerjena po krajsi stranici, razmerje vedno ohranjeno. */
+        /**
+         * Gledalec: crno ozadje, slika umerjena po krajsi stranici, razmerje vedno ohranjeno. Dotik
+         * na sliki gre nazaj h gostitelju (kratek dotik = tap, premik = poteg) prek %%VNOS%% - stran
+         * ni le mirujoca slika, aplikacijo na drugi napravi je mogoce dejansko upravljati od tu.
+         */
         private const val STRAN_GLEDALCA = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Safeer Link – zaslon</title>
-<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}
-img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"><title>Safeer Link – zaslon</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden;touch-action:none}
+img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;-webkit-user-select:none;user-select:none}
 #konec{display:none;position:absolute;inset:0;color:#cbd5e1;font:20px sans-serif;align-items:center;justify-content:center;text-align:center;padding:24px}
 </style></head><body>
-<img id="zaslon" src="%%TOK%%" alt="">
+<img id="zaslon" src="%%TOK%%" alt="" draggable="false">
 <div id="konec">Deljenje zaslona je končano.</div>
 <script>
 var s=document.getElementById('zaslon');
 s.onerror=function(){s.style.display='none';document.getElementById('konec').style.display='flex';};
+var vnosPot='%%VNOS%%';
+function tocka(e){
+  var r=s.getBoundingClientRect();
+  var t=e.changedTouches?e.changedTouches[0]:e;
+  var x=(t.clientX-r.left)/r.width, y=(t.clientY-r.top)/r.height;
+  return [Math.min(1,Math.max(0,x)), Math.min(1,Math.max(0,y))];
+}
+var zacetna=null, zacetniCas=0;
+function dol(e){ e.preventDefault(); zacetna=tocka(e); zacetniCas=Date.now(); }
+function gor(e){
+  e.preventDefault();
+  if(!zacetna) return;
+  var koncna=tocka(e), trajanje=Date.now()-zacetniCas;
+  var dx=koncna[0]-zacetna[0], dy=koncna[1]-zacetna[1], telo;
+  if(Math.abs(dx)<0.02 && Math.abs(dy)<0.02) telo={vrsta:'tap',x:zacetna[0],y:zacetna[1]};
+  else telo={vrsta:'swipe',x1:zacetna[0],y1:zacetna[1],x2:koncna[0],y2:koncna[1],ms:Math.max(80,Math.min(1200,trajanje))};
+  zacetna=null;
+  fetch(vnosPot,{method:'POST',body:JSON.stringify(telo)}).catch(function(){});
+}
+s.addEventListener('touchstart',dol,{passive:false});
+s.addEventListener('touchend',gor,{passive:false});
+s.addEventListener('mousedown',dol);
+s.addEventListener('mouseup',gor);
 </script></body></html>"""
 
         private const val STRAN_KONEC = """<!doctype html><html><head><meta charset="utf-8"><title>Safeer Link</title>
