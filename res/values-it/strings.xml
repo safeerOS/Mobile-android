@@ -89,4 +89,6 @@
     <string name="os_ur_obv_brisanje">Conferma l\'eliminazione della foto</string>
     <string name="os_ur_obv_vrtenje">Conferma la rotazione della foto</string>
     <string name="os_ur_obv_opis">La richiesta arriva da Safeer Link. Tocca per confermare.</string>
+    <string name="ssl_compromised_ca_title">Avviso di sicurezza: autorità di certificazione compromessa (eMudhra)</string>
+    <string name="ssl_compromised_ca_msg">Il certificato di questo sito è stato emesso da un\'autorità di certificazione revocata a causa di chiavi compromesse. Per questo non apriamo il sito.</string>
 </resources>
