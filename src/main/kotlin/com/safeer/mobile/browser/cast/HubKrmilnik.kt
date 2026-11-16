@@ -240,6 +240,10 @@ object HubKrmilnik {
      */
     fun lastniId(): String = KrogNaprave.lastniId(nadomestni = { stariId() })
 
+    /** Platforma te naprave v krogu zaupanja (skupna koda Link Core jo bere od krmilnika aplikacije). */
+    @Suppress("UNUSED_PARAMETER")
+    fun platforma(context: Context): String = "phone"
+
     /** Id po modelu naprave, kot je veljal pred prehodom na id iz kljuca (nadomestek in alias). */
     fun stariId(): String = "phone-" + android.os.Build.MODEL.replace(Regex("\\s+"), "-").lowercase()
 
