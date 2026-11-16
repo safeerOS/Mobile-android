@@ -1,0 +1,398 @@
+package com.safeer.mobile.browser.cast
+
+// Preneseno iz brskalnika za televizor (si.safeer.tv.cast) brez sprememb v logiki:
+// gostitelj Safeer Linka mora biti enak na vseh napravah, sicer se protokol razide.
+// Ce se tu kaj spremeni, mora ista sprememba v tv-browser-2 (vir); kopijo naredi tools/link-core-sync.sh.
+
+/**
+ * Dostop drugih naprav v Safeer Linku do vsebin TE naprave. Cista pravila brez Androida (tests/DostopPravilaTest.kt).
+ *
+ * 6. 10. 2026: seznanitev v Safeer Link ni vec dovoljenje za vsebine. Safeer Link je sirsi krog (»EU«): vsaka
+ * naprava v njem pomaga pri povezavi (sredisce, posredovanje, pot prek mobilnega omrezja) in sprejme, kar ji kdo
+ * izrecno poslje. Dostop do vsebin je ozji krog (»Schengen«): na VSAKI napravi posebej in za VSAKO drugo napravo
+ * posebej uporabnik odloci, kaj ji odpre - datoteke, programe, predvajalnik, zaslon in upravljanje. Brez tega
+ * naprava zahtevo zavrne sama (ne le gumb na zaslonu druge naprave).
+ *
+ * Prej je bila vsaka seznanjena naprava enakovredna: telefon druge osebe, dodan v Link, je takoj dobil sezname in
+ * vire Medijskega centra, seznam programov, datoteke in »Nadaljuj z druge naprave« (izmerjeno 6. 10. 2026).
+ */
+object DostopPravila {
+
+    /**
+     * 6. 10. 2026 00:00:00 UTC. Naprave, ki so bile s to napravo v krogu ze pred tem dnem, ob uvedbi dovoljenj obdrzijo
+     * dostop (uporabnikove dosedanje naprave delajo naprej brez enega dotika); vsaka pozneje dodana zacne brez dostopa.
+     */
+    const val MEJA_PODEDOVANJA = 1_791_244_800.0
+
+    /** Kaj uporabnik drugi napravi na tej napravi odpre. [crka] je zapis v shrambi. */
+    enum class Zmoznost(val crka: Char) { DATOTEKE('d'), PROGRAMI('p'), PREDVAJALNIK('v'), ZASLON('z') }
+
+    /** Kaj zahteva dejanje: PROSTO sme vsaka naprava v Linku; VSE samo naprava, ki ji je odprto vse (ozji krog). */
+    enum class Zahteva { PROSTO, DATOTEKE, PROGRAMI, PREDVAJALNIK, ZASLON, VSE }
+
+    val VSE_ZMOZNOSTI: Set<Zmoznost> = Zmoznost.values().toSet()
+
+    fun izNiza(s: String?): Set<Zmoznost> = Zmoznost.values().filter { s != null && s.indexOf(it.crka) >= 0 }.toSet()
+
+    fun vNiz(z: Set<Zmoznost>): String = Zmoznost.values().filter { it in z }.joinToString("") { it.crka.toString() }
+
+    private val DATOTEKE = setOf("files.list", "files.search", "files.open", "files.request_access", "storage.put", "storage.status")
+    private val PROGRAMI = setOf("apps.list", "apps.launch", "apps.close", "apps.running", "apps", "launch_app", "open_in_app")
+    private val PREDVAJALNIK = setOf(
+        // Kaj naprava predvaja, nadaljevanje in ustavitev; seznami in viri Medijskega centra.
+        "play.state", "play.stop", "lists.get",
+        // Naloga 117: upravljanje predvajanja kot lokalno (si.safeer.tv.os.OddaljenoPravila.DEJANJE).
+        "play.control",
+        // Odpiranje vsebine na tej napravi brez vprasanja in zvok druge naprave na njenih zvocnikih.
+        "open_url", "magnet.open", "audio.play", "audio.stop", "media.open",
+        // Pomoc pri predvajanju vidi, kaj druga naprava gleda, in trosi to napravo (prenos, pretvorba, dodatki).
+        "magnet.stream", "magnet.list", "magnet.remove", "magnet.keep",
+        "video.transcode", "video.status", "video.stream", "video.stream_stop", "video.stream_status",
+        "avail.get", "host.info",
+    )
+    private val ZASLON = setOf("screen.start", "screen.stop", "screen.status", "key", "scroll", "screenshot",
+        "volume", "restart", "clear_cache", "status")
+
+    /**
+     * Kaj zahteva ukaz `control.command`. Ponudba »Poslji na napravo« (`play.offer`) je prosta: nic se ne zacne,
+     * dokler uporabnik na tej napravi ne sprejme. Neznano dejanje zahteva vse - novo dejanje ni odprto po pomoti.
+     */
+    fun zahtevaDejanja(dejanje: String): Zahteva {
+        val d = dejanje.trim().lowercase()
+        return when {
+            d == "play.offer" -> Zahteva.PROSTO
+            d in DATOTEKE -> Zahteva.DATOTEKE
+            d in PROGRAMI -> Zahteva.PROGRAMI
+            d in PREDVAJALNIK -> Zahteva.PREDVAJALNIK
+            d in ZASLON || d.startsWith("input.") || d.startsWith("gamepad.") -> Zahteva.ZASLON
+            else -> Zahteva.VSE
+        }
+    }
+
+    /**
+     * Kaj zahteva sporocilo, ki ni ukaz. Besedilo, datoteka in klepet so izrecno poslani tej napravi (prosto; pristanejo
+     * v Sporocilih oziroma Prejetem). Stran ali predvajanje, ki se odpre samo, zahteva predvajalnik; usklajevanje stanja
+     * (odprte strani, iskanja, mesta v filmih, delovni prostor) samo ozji krog - naprava, ki ji je odprto vse; zaslon
+     * druge naprave, ki se tu odpre sam, zahteva zaslon. Konec deljenja je vedno dovoljen.
+     */
+    fun zahtevaSporocila(tip: String, dejanje: String = ""): Zahteva = when (tip) {
+        "cast.url", "cast.control", "handoff.request" -> Zahteva.PREDVAJALNIK
+        "sync.data" -> Zahteva.VSE
+        "share.screen" -> if (dejanje == "stop") Zahteva.PROSTO else Zahteva.ZASLON
+        else -> Zahteva.PROSTO
+    }
+
+    fun sme(dano: Set<Zmoznost>, zahteva: Zahteva): Boolean = when (zahteva) {
+        Zahteva.PROSTO -> true
+        Zahteva.DATOTEKE -> Zmoznost.DATOTEKE in dano
+        Zahteva.PROGRAMI -> Zmoznost.PROGRAMI in dano
+        Zahteva.PREDVAJALNIK -> Zmoznost.PREDVAJALNIK in dano
+        Zahteva.ZASLON -> Zmoznost.ZASLON in dano
+        Zahteva.VSE -> dano.containsAll(VSE_ZMOZNOSTI)
+    }
+
+    /**
+     * Kar velja od zapisanih zmoznosti: nic za napravo, ki je umaknjena iz kroga (umik takoj preklice dostop, lastnik
+     * 25. 10. 2026), sicer zapisano.
+     */
+    fun veljavne(dano: Set<Zmoznost>, umaknjena: Boolean): Set<Zmoznost> = if (umaknjena) emptySet() else dano
+
+    /**
+     * Jedra naprav iz [jedra], ki so umaknjene iz kroga: njihov zapis dovoljenj in privolitve se ob umiku ZBRISEJO
+     * (pregled 10. 11. 2026, najdba A). Prej je zapis ostal in ga je naprava ob vrnitvi v krog dobila nazaj - tudi, ce
+     * jo je vrnil kdo drug kot uporabnik te naprave. Zdaj naprava po vrnitvi zacne brez dostopa; odpre ji ga uporabnik.
+     */
+    fun umaknjenaJedra(jedra: Collection<String>, umaknjena: (String) -> Boolean): Set<String> = jedra.filter { umaknjena(it) }.toSet()
+
+    /**
+     * Pregled veje tv-vnos (25. 10. 2026, tocka 1): vnos z miske in tipkovnice (input.*, gamepad.*) - tudi vklop Safeer
+     * Vnosa (input.enable) - sme samo naprava, ki je CLAN kroga zaupanja te naprave (ne umaknjena) in ji je odprt zaslon.
+     * Zapis dovoljenj sam ni dovolj: naprava, ki je krog ne pozna, ni umaknjena, a tudi ni clan.
+     */
+    fun zahtevaClanstvo(dejanje: String): Boolean {
+        val d = dejanje.trim().lowercase()
+        return d.startsWith("input.") || d.startsWith("gamepad.")
+    }
+
+    /** [jedro] posiljatelja (iz preverjenega kljuca ali oznake) je ta naprava ali clan kroga, ki ni umaknjen. Napaka = ne. */
+    fun clanKroga(jedro: String, taNaprava: (String) -> Boolean, clan: (String) -> Boolean, umaknjen: (String) -> Boolean): Boolean =
+        jedro.isNotBlank() && try { taNaprava(jedro) || (clan(jedro) && !umaknjen(jedro)) } catch (_: Throwable) { false }
+
+    /**
+     * Ukaz, ki ga sprejmemo samo po preverjeni seji od naprave do naprave (pregled Webtor rezerve V1/U1): pri nezasciteni
+     * poti oznako posiljatelja vpise sredisce - to je lahko katerakoli naprava v Linku. Samodejno usklajevanje kljucev
+     * (os/UskladitevKljucevPravila.DEJANJE) posilja samo naprava, ki zascito zna.
+     */
+    fun samoZasciteno(dejanje: String): Boolean = dejanje.trim().lowercase() == "secrets.sync"
+
+    /** Ukaz [dejanje]: dostop po zmoznostih ([smeZmoznosti], [smePosiljatelj]), za vnos se clanstvo v krogu ([clanKroga]). */
+    fun smeUkaz(dejanje: String, smeZmoznosti: Boolean, clanKroga: () -> Boolean): Boolean =
+        smeZmoznosti && (!zahtevaClanstvo(dejanje) || clanKroga())
+
+    /**
+     * Pravilo lastnika (25. 10. 2026 10:49, velja povsod; isto kot core/link_dostop.ozji_krog na racunalniku): naprava, ki
+     * jo uporabnik da v ozji krog (katerakoli zmoznost), dobi z ISTO privolitvijo tudi upravljanje in Safeer Vnos (ZASLON)
+     * ter datoteke (DATOTEKE) - brez locenih stikal. Prazen nabor ostane prazen (naprava samo pomaga pri povezavi).
+     * Velja ob privolitvi uporabnika; zapisov od prej ne siri samo od sebe.
+     */
+    val OZJI_KROG: Set<Zmoznost> = setOf(Zmoznost.DATOTEKE, Zmoznost.ZASLON)
+
+    fun ozjiKrog(dano: Set<Zmoznost>): Set<Zmoznost> = if (dano.isEmpty()) emptySet() else dano + OZJI_KROG
+
+    /**
+     * Pregled veje tv-vnos (tocka 5): Safeer Vnos se sam vklopi samo za zaslon, ki ga je uporabnik odprl s privolitvijo po
+     * uvedbi te funkcije ([privolitve] - jedra, ki jim je bil zaslon shranjen v Nastavitvah ali Linku). Podedovane
+     * naprave ([podedovani]: ob uvedbi dovoljenj so dobile vse) zaslon obdrzijo, Vnosa pa brez nove privolitve ne vklopijo.
+     */
+    fun zaslonSPrivolitvijo(zapis: Map<String, Set<Zmoznost>>, privolitve: Set<String>): Set<String> =
+        zapis.filter { (j, z) -> Zmoznost.ZASLON in z && j in privolitve }.keys
+
+    /**
+     * Privolitve po shranjenem dostopu naprave [jedro]: z zmoznostjo [z] (zaslon za Safeer Vnos, datoteke za vse datoteke
+     * `fs:`) je privolitev zabelezena, brez nje umaknjena.
+     */
+    fun privolitvePo(privolitve: Set<String>, jedro: String, dano: Set<Zmoznost>, z: Zmoznost = Zmoznost.ZASLON): Set<String> =
+        if (z in dano) privolitve + jedro else privolitve - jedro
+
+    /** Clan kroga, kolikor ga pravila potrebujejo. */
+    class Clan(val id: String, val kljuc: String, val dodano: Double)
+
+    /**
+     * Stalna oznaka naprave ne glede na to, pod katerim id-jem se javi. Odloca KLJUC, pod katerim je naprava v krogu:
+     * - id iz kljuca (`n-<16 hex>`, po zelji s pripono sorodnika `-os`, `-control` ...) da svoje jedro - RAZEN ce je pod
+     *   tem id-jem v krogu vpisan drug kljuc. Tak vnos je videti kot druga naprava, a to ni (izmerjeno 7. 10. 2026 na
+     *   racunalniku: krog ga je sprejel in preverba dostopa mu je dala dostop posnemane naprave); dobi prazno jedro,
+     *   torej nic;
+     * - star id (npr. po modelu naprave) se prevede prek kljuca v krogu; naprava, ki je krog ne pozna, ostane pri
+     *   svojem id-ju (zanjo ni zapisa, torej nima dostopa). Pokvarjen kljuc ne odpre nicesar (prazno jedro).
+     */
+    fun jedro(id: String, kljucClana: (String) -> String?, idIzKljuca: (String) -> String): String {
+        val jedroKljuca = try {
+            kljucClana(id)?.takeIf { it.isNotBlank() }?.let { idIzKljuca(it) } ?: ""
+        } catch (_: Throwable) { return "" }
+        if (jeIdIzKljuca(id)) {
+            if (jedroKljuca.isNotEmpty() && jedroKljuca != id.take(DOLZINA_JEDRA)) return ""
+            return id.take(DOLZINA_JEDRA)
+        }
+        return jedroKljuca.ifEmpty { id }
+    }
+
+    /** Natanko jedro iz kljuca (`n-<16 hex>`, brez pripone) - oblika zapisa naprav, ki so kljuc dokazale. */
+    fun jeJedro(s: String): Boolean = s.length == DOLZINA_JEDRA && jeIdIzKljuca(s)
+
+    /** Predpona kljuca shrambe za oznako brez jedra (glej [kljucShrambe]). */
+    const val BREZ_JEDRA = "brez-jedra:"
+
+    /**
+     * Kljuc, pod katerim shrambe (izrecno poslane datoteke, seznami prejemnikov oddaj) vodijo napravo: njeno [jedro].
+     * Oznaka, pod katero je v krogu DRUG kljuc, jedra nima. Dobi kljuc, ki ne more biti enak jedru ali oznaki nobene
+     * druge naprave - tudi kadar je taka oznaka kar golo jedro prave naprave (`n-<16 hex>`): kar je shranjeno za pravo
+     * napravo, zanjo ne velja.
+     */
+    fun kljucShrambe(id: String, jedro: String): String = jedro.ifEmpty { BREZ_JEDRA + id }
+
+    /**
+     * Javni kljuc, s katerim preverimo podpis naprave v dogovoru zascite (cast/E2e). Oznaka iz kljuca je vezana na kljuc:
+     * velja samo kljuc, ki da njeno jedro - vzamemo ga, kjerkoli v krogu je ([vsiKljuci]: vnos naprave same, sorodnika
+     * ali stare oznake). Vnos s to oznako in DRUGIM kljucem ne steje: tujega kljuca tako ne more podtakniti niti
+     * sredisce, od katerega dobivamo krog, in s takim vnosom pravi napravi zascite ne more onemogociti. Stara oznaka
+     * (ni iz kljuca) ima kljuc svojega vnosa ([kljucVnosa]); njeno jedro je potem jedro TEGA kljuca.
+     */
+    fun kljucZaZascito(
+        id: String, kljucVnosa: (String) -> String?, vsiKljuci: () -> List<String>, idIzKljuca: (String) -> String
+    ): String? {
+        if (!veljavnaOznaka(id)) return null        // oznaka, ki ne sme v podpisane bajte dogovora: zanjo kljuca ni
+        if (jeIdIzKljuca(id)) {
+            val jedro = id.take(DOLZINA_JEDRA)
+            return vsiKljuci().firstOrNull { k -> k.isNotBlank() && try { idIzKljuca(k) == jedro } catch (_: Throwable) { false } }
+        }
+        return kljucVnosa(id)?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Ali sme posiljatelj to, kar [zahteva] zahteva. [zascita] je jedro iz PREVERJENEGA kljuca, kadar je sporocilo prislo
+     * zasciteno (cast/E2e): takrat odloca kljuc ([zmoznostiJedra]), ne oznaka. Brez zascite velja oznaka, ki jo je
+     * vpisalo sredisce ([zmoznostiOznake]) - a samo za napravo, ki zascite (se) ne zna: od naprave, ki jo zna
+     * ([zahtevaZascito]), nezascitenega ne sprejmemo, kadar gre za sporocilo, ki ga naprave z zascito posiljajo
+     * zasciteno ([zascitljivo]).
+     */
+    fun smePosiljatelj(
+        zahteva: Zahteva, zascita: String, zascitljivo: Boolean, zahtevaZascito: () -> Boolean,
+        zmoznostiJedra: (String) -> Set<Zmoznost>, zmoznostiOznake: () -> Set<Zmoznost>,
+    ): Boolean {
+        if (zahteva == Zahteva.PROSTO) return true
+        if (zascita.isNotEmpty()) return sme(zmoznostiJedra(zascita), zahteva)
+        if (zascitljivo && zahtevaZascito()) return false
+        return sme(zmoznostiOznake(), zahteva)
+    }
+
+    const val DOLZINA_JEDRA = 18
+    /** Najdaljsa oznaka naprave. */
+    const val NAJVEC_OZNAKE = 128
+
+    /**
+     * Oznaka iz kljuca: `n-<16 hex>`, po zelji s pripono programa (`-os`, `-control` ...) iz crk, stevk, pike, podcrtaja
+     * in vezaja. Isto pravilo kot KrogZaupanja.jeIdIzKljuca (tu brez odvisnosti, da pravila tecejo sama). Oznaka z drugimi
+     * znaki (presledek, prelom vrstice ...) NI oznaka iz kljuca in kljuca po jedru ne dobi: z njo je sredisce sejo zascite
+     * ene naprave prevezalo na drugo (drugi neodvisni pregled, 7. 10. 2026).
+     */
+    fun jeIdIzKljuca(id: String): Boolean {
+        if (id.length < DOLZINA_JEDRA || id.length > NAJVEC_OZNAKE || !id.startsWith("n-")) return false
+        if (!id.substring(2, DOLZINA_JEDRA).all { it in '0'..'9' || it in 'a'..'f' }) return false
+        if (id.length == DOLZINA_JEDRA) return true
+        return id[DOLZINA_JEDRA] == '-' && id.substring(DOLZINA_JEDRA + 1).all {
+            it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '_' || it == '-'
+        }
+    }
+
+    /**
+     * Ali sme oznaka naprave v podpisane bajte dogovora zascite: 1-128 vidnih znakov ASCII (brez presledka, krmilnih
+     * znakov in locil vrstic). Isto pravilo kot E2e.veljavnaOznaka.
+     */
+    fun veljavnaOznaka(id: String): Boolean = id.isNotEmpty() && id.length <= NAJVEC_OZNAKE && id.all { it in '!'..'~' }
+
+    /**
+     * Ali od naprave s to oznako sprejmemo samo zascitena sporocila (ker vemo, da jih zna poslati) - in ji zascitene tipe
+     * tudi posiljamo samo zasciteno. [znaZascito] pove, ali je naprava s tem jedrom kljuc ze dokazala, [jedro] da jedro
+     * oznake po krogu ([DostopPravila.jedro]).
+     *
+     * Pri oznaki iz kljuca odloca jedro iz OBLIKE oznake, ne vnos v krogu: vnos s to oznako in DRUGIM kljucem (podtakne
+     * ga lahko clan ali sredisce, novejsi vnos krog sprejme) da prazno jedro in je prej zahtevo ugasnil - odgovori taki
+     * napravi so potem sli nezasciteni (drugi neodvisni pregled, 7. 10. 2026).
+     */
+    fun zahtevaZascito(id: String, znaZascito: (String) -> Boolean, jedro: (String) -> String): Boolean {
+        if (id.isBlank()) return false
+        if (jeIdIzKljuca(id) && znaZascito(id.take(DOLZINA_JEDRA))) return true
+        return znaZascito(jedro(id))
+    }
+
+    /** Naprava, ki ji oznaka pripada, za stetje poskusov: jedro oznake iz kljuca, sicer oznaka sama. */
+    fun jedroOznake(id: String): String = if (jeIdIzKljuca(id)) id.take(DOLZINA_JEDRA) else id
+
+    /**
+     * Oznaka sporocila (`id`, `ref_id`) je kratka (nasi programi: do ~50 znakov). Daljse ne sprejmemo: odgovor ali
+     * potrditev oznako ukaza ponovi, z zelo dolgo pa je naprava brez pravic polnila pomnilnik prejemnika (cetrti
+     * neodvisni pregled, 7. 10. 2026).
+     */
+    const val NAJVEC_OZNAKE_SPOROCILA = 128
+    /** Odgovor ponovi tudi ime dejanja iz ukaza: najvec toliko znakov. */
+    const val NAJVEC_PONOVLJENEGA_DEJANJA = 64
+
+    /** Oznaka sporocila je lahko tudi stevilo (nasi programi posiljajo niz): celo ali obicajna decimalka do te velikosti. */
+    const val NAJVECJE_STEVILO_OZNAKE = 9.223372036854775807E18
+
+    /**
+     * Ali katere od oznak sporocila (vrednosti polj `id`, `ref_id`) ne sprejmemo. Oznako programi ponavljajo v odgovorih
+     * in potrditvah, zato sme biti samo: niz do NAJVEC_OZNAKE_SPOROCILA znakov, obicajno stevilo ali nic (null - klicatelj
+     * poda null tudi za JSON null). Seznam, slovar, logicna vrednost ali neskoncno stevilo na tem mestu bi se ponovilo v
+     * poljubni velikosti ali obliki (peti neodvisni pregled, 7. 10. 2026).
+     */
+    fun predolgaOznaka(vararg oznake: Any?): Boolean = oznake.any { o ->
+        when (o) {
+            null -> false
+            is String -> o.length > NAJVEC_OZNAKE_SPOROCILA
+            is Int, is Long, is Short, is Byte -> false
+            is Double -> o.isNaN() || o.isInfinite() || Math.abs(o) >= NAJVECJE_STEVILO_OZNAKE
+            is Float -> o.isNaN() || o.isInfinite()
+            else -> true
+        }
+    }
+
+    /** Toliko naprav iz seznama sredisca si zapomnimo (zmoznosti). */
+    const val NAJVEC_NAPRAV_V_SEZNAMU = 512
+    /** Najvec dogovorov zascite, ki jih sprozi en seznam naprav. */
+    const val NAJVEC_DOKAZOV_NA_SEZNAM = 16
+    /** Najvec dogovorov na minuto z oznakami ene naprave (jedra). */
+    const val NAJVEC_DOKAZOV_NA_JEDRO = 4
+    /** Zapisov o zadnjem poskusu. */
+    const val NAJVEC_ZAPISOV_DOKAZOV = 512
+
+    /**
+     * Katere naprave iz seznama sredisca smejo ZDAJ v dogovor za dokaz kljuca. [kandidati] so oznake naprav, ki zascito
+     * prijavijo in z njimi nimamo seje (po vrsti iz seznama), [zadnjic] kdaj smo z oznako nazadnje zaceli dogovor.
+     * Seznam pise sredisce: z dolgim seznamom ali z veliko oznakami iste naprave (isto jedro, izmisljene pripone) ne sme
+     * sproziti veliko podpisov s kljucem naprave na bralni niti (drugi neodvisni pregled, 7. 10. 2026). Najvec en poskus
+     * na oznako v [naMs], najvec [NAJVEC_DOKAZOV_NA_JEDRO] na napravo v tem casu in [NAJVEC_DOKAZOV_NA_SEZNAM] na
+     * seznam; ko je zapisov [NAJVEC_ZAPISOV_DOKAZOV], novih ni.
+     */
+    fun izberiZaDokaz(kandidati: List<String>, zadnjic: Map<String, Long>, zdaj: Long, naMs: Long): List<String> {
+        val nedavni = HashMap<String, Int>()
+        for ((id, kdaj) in zadnjic) if (zdaj - kdaj < naMs) { val j = jedroOznake(id); nedavni[j] = (nedavni[j] ?: 0) + 1 }
+        var zapisov = zadnjic.size
+        val izbrani = ArrayList<String>()
+        for (id in kandidati) {
+            val prej = zadnjic[id]
+            if (prej != null && zdaj - prej < naMs) continue
+            if (izbrani.size >= NAJVEC_DOKAZOV_NA_SEZNAM) break
+            val jedro = jedroOznake(id)
+            if ((nedavni[jedro] ?: 0) >= NAJVEC_DOKAZOV_NA_JEDRO || (prej == null && zapisov >= NAJVEC_ZAPISOV_DOKAZOV)) continue
+            if (prej == null) zapisov++
+            nedavni[jedro] = (nedavni[jedro] ?: 0) + 1
+            izbrani.add(id)
+        }
+        return izbrani
+    }
+
+    /**
+     * Naprave, ki ob uvedbi dovoljenj obdrzijo dostop na tej napravi (jedra): tiste, ki so v krogu ze od prej kot
+     * [meja] - a le, ce je bila v krogu ze prej tudi TA naprava. Naprava, dodana po meji (telefon druge osebe, nova
+     * namestitev), ne podeduje nikogar: tudi ona svojih vsebin ne odpre napravam, ki jih je spoznala sele zdaj.
+     * Steje najstarejsi veljavni vnos istega kljuca (naprava ima lahko vec id-jev).
+     */
+    fun podedovani(clani: List<Clan>, lastniKljuc: String?, idIzKljuca: (String) -> String, meja: Double = MEJA_PODEDOVANJA): Set<String> {
+        if (lastniKljuc.isNullOrBlank()) return emptySet()
+        val najstarejsi = HashMap<String, Double>()
+        for (c in clani) {
+            if (c.kljuc.isBlank()) continue
+            val prej = najstarejsi[c.kljuc]
+            if (prej == null || c.dodano < prej) najstarejsi[c.kljuc] = c.dodano
+        }
+        val nas = najstarejsi[lastniKljuc] ?: return emptySet()
+        if (nas >= meja) return emptySet()
+        val izid = HashSet<String>()
+        for ((kljuc, dodano) in najstarejsi) {
+            if (kljuc == lastniKljuc || dodano >= meja) continue
+            try { izid.add(idIzKljuca(kljuc)) } catch (_: Throwable) { }
+        }
+        return izid
+    }
+
+    /** Posiljatelj, pod katerim sredisce posreduje dotik gledalca deljenega zaslona (HubKrmilnik.naVnosGledalca). */
+    const val GLEDALEC = "gledalec"
+
+    /** Parameter ukaza gledalca, v katerem sredisce poslje znak deljenja ([znakGledalca]). */
+    const val PARAM_ZNAK_GLEDALCA = "_znak"
+
+    /**
+     * Znak deljenja zaslona: zgoscena vrednost id-ja in kljuca deljenja. Poznajo ju naprava, ki zaslon deli, sredisce,
+     * ki deljenje gosti, in gledalec, ki mu je bil zaslon poslan. Sredisce z znakom oznaci dotik gledalca; naprava, ki
+     * bi se v Link le prijavila pod imenom »gledalec«, ga ne pozna. Kljuca deljenja se iz znaka ne da dobiti.
+     */
+    fun znakGledalca(idDeljenja: String, kljucDeljenja: String): String {
+        if (idDeljenja.isBlank() || kljucDeljenja.isBlank()) return ""
+        val zgostitev = java.security.MessageDigest.getInstance("SHA-256")
+            .digest("safeer-gledalec-v1\n$idDeljenja\n$kljucDeljenja".toByteArray(Charsets.UTF_8))
+        return zgostitev.joinToString("") { String.format("%02x", it.toInt() and 0xFF) }
+    }
+
+    /**
+     * Dotik gledalca deljenega zaslona. Gledalec ni naprava v Linku (zaslon gleda s kljucem deljenja), zato zanj ni
+     * zapisa. Upravljati sme (input.*) samo, dokler TA naprava sama deli zaslon ([deliZaslon]), in samo, ce je napravi,
+     * s katero ga deli, tu odprt zaslon in upravljanje ([zmoznostiCilja]). Ogled je uporabnik izrecno poslal;
+     * upravljanje naprave je dostop - gostu, ki mu zaslon samo pokazes, s tem ne das naprave v roke.
+     * [znakDeljenja] je znak deljenja, ki tece na tej napravi, [znakUkaza] tisti, ki ga je prinesel ukaz: biti morata
+     * enaka (prazen znak ne velja nikoli - dokler sredisce deljenja ne odpre, dotika ni).
+     */
+    fun smeGledalec(
+        dejanje: String, deliZaslon: Boolean, zmoznostiCilja: Set<Zmoznost>, znakDeljenja: String, znakUkaza: String
+    ): Boolean =
+        deliZaslon && dejanje.trim().lowercase() in VNOS_GLEDALCA && Zmoznost.ZASLON in zmoznostiCilja &&
+            znakDeljenja.isNotBlank() &&
+            java.security.MessageDigest.isEqual(znakDeljenja.toByteArray(Charsets.UTF_8), znakUkaza.toByteArray(Charsets.UTF_8))
+
+    /** Kar stran gledalca poslje (HubTokovi.vnosVZaslon): dotik, poteg, tipka. Nic drugega. */
+    private val VNOS_GLEDALCA = setOf("input.tap", "input.swipe", "input.key")
+
+    /** Kratek opis za vrstico naprave: katere zmoznosti so odprte, v vrstnem redu stikal. */
+    fun povzetek(dano: Set<Zmoznost>): List<Zmoznost> = Zmoznost.values().filter { it in dano }
+}
