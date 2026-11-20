@@ -2552,11 +2552,22 @@ class HubUsmerjevalnik(
         const val MESH = "mesh1"
         /** Lastnost oglasa mDNS, s katero Hub pove, da zna sosednje povezave. */
         const val TXT_MESH = "mesh"
-        const val NAJVEC_MESH_SPOROCILO = 1024 * 1024
+        /** Sporocilo, ovito v mesh.route, ne sme presegati okvira Huba (sicer ga sosed zavrne): enaka meja kot HubStreznik. */
+        const val NAJVEC_MESH_SPOROCILO = HubStreznik.NAJVECJE_SPOROCILO.toInt()
         const val NAJVEC_CAKAJOCIH = 8
         const val NAJVEC_KATEGORIJ = 8
-        const val NAJVECJA_KATEGORIJA = 192 * 1024
-        const val NAJVEC_SKUPAJ_SYNC = 512 * 1024
+        /**
+         * Do 19. 11. 2026 192 KB / 512 KB skupaj: zapiski Line (kategorija safeer.notes.v1, meje 5000 zapiskov in 262144 kodnih tock)
+         * so z navadnim besedilom ~0,85 MB; ob omejitvi 192 KB bi se sinhronizacija med napravami tiho ustavila. Lokalna meja shrambe
+         * (LinaVmesnikPravila.NAJVEC_SINH_BAJTOV) ne sme biti vecja od te; preizkus to drzi.
+         */
+        const val NAJVECJA_KATEGORIJA = 1024 * 1024
+        /**
+         * Skupaj shranjeno: ena najvecja kategorija in se 512 KiB drugega. Vse shranjeno gre ob dohitevanju (sync.request, po eno
+         * kategorijo na zahtevo) v izhodno vrsto povezave; vsota mora ostati pod HubStreznik.NAJVEC_BAJTOV_V_VRSTI, sicer dve
+         * zaporedni zahtevi zapreta povezavo z 1011 (CodeRabbit Mobile st1; do 19. 11. 2026 2 MiB). Preizkus UsmerjevalnikTest drzi mejo.
+         */
+        const val NAJVEC_SKUPAJ_SYNC = NAJVECJA_KATEGORIJA + 512 * 1024
         const val NAJVEC_IMENA = 64
         /** Protocol v1: katalog aplikacij ene naprave (vnosov in bajtov). */
         const val NAJVEC_APLIKACIJ = 200
@@ -2657,8 +2668,17 @@ class Namestnik(
     override fun poslji(besedilo: String) {
         val tovor = JsonLahki.Zapis().niz("to", cilj).niz("msg", besedilo)
         if (posredno) tovor.logicno("relay", true)
-        povezava.poslji(JsonLahki.Zapis().niz("id", UUID.randomUUID().toString()).niz("type", "mesh.route")
-            .surovo("payload", tovor.toString()).toString())
+        val izpis = JsonLahki.Zapis().niz("id", UUID.randomUUID().toString()).niz("type", "mesh.route")
+            .surovo("payload", tovor.toString()).toString()
+        // Prevelik okvir bi sosed zaprl z 1009 in s tem tudi drugi promet; raje se tako sporocilo ne poslje (CodeRabbit st4).
+        // ODLOCITEV (CodeRabbit Mobile st2, 20. 11. 2026): kategorija z izjemno veliko JSON ubeganja (preko ~0,5 MB narekovajev) se
+        // sosedu NE posreduje, lokalna naprava pa jo dobi in jo Hub hrani; zavrnitev ze ob sprejemu bi pokvarila sinhronizacijo
+        // uporabnikom z enim Hubom (vecina), posredovanje med Hubi pa se po naravi ponovi ob naslednji spremembi.
+        if (izpis.length > 262_144 && izpis.toByteArray(Charsets.UTF_8).size > HubStreznik.NAJVECJE_SPOROCILO) {
+            android.util.Log.w("SafeerHubMesh", "mesh.route: sporocilo presega okvir Huba, ni poslano")
+            return
+        }
+        povezava.poslji(izpis)
     }
 
     /** Zapreti se da samo sosednjo povezavo, ne posamezne oddaljene naprave. */
