@@ -30,6 +30,16 @@ private fun preveriEnako(opis: String, pricakovano: Any?, dobljeno: Any?) {
     preveri("$opis (pričakovano=$pricakovano, dobljeno=$dobljeno)", pricakovano == dobljeno)
 }
 
+/** Omejeno cakanje na pogoj (namesto fiksnega spanja): true, ce pogoj velja pred iztekom. */
+private fun pocakaj(ms: Long = 5000, pogoj: () -> Boolean): Boolean {
+    val konec = System.currentTimeMillis() + ms
+    while (System.currentTimeMillis() < konec) {
+        if (pogoj()) return true
+        Thread.sleep(20)
+    }
+    return pogoj()
+}
+
 // ------------------------------------------------------------ pomozni odjemalec
 
 private class TestniOdjemalec(vrata: Int) {
@@ -84,6 +94,17 @@ private class TestniOdjemalec(vrata: Int) {
     }
 
     /** Okvir odjemalca mora biti maskiran - tako kot ga poslje pravi brskalnik. */
+    /** Samo glava masknega besedilnega okvirja z napovedano dolzino in maska; polja NE posle (rezervacija pomnilnika). */
+    fun posljiGlavoOkvirja(dolzina: Long) {
+        val g = ArrayList<Byte>()
+        g.add((0x80 or 0x1).toByte())
+        g.add((0x80 or 127).toByte())
+        for (i in 7 downTo 0) g.add(((dolzina shr (8 * i)) and 0xFF).toByte())
+        for (i in 0 until 4) g.add(i.toByte())
+        izhod.write(g.toByteArray())
+        izhod.flush()
+    }
+
     fun posljiBesedilo(besedilo: String, maskiraj: Boolean = true) {
         val podatki = besedilo.toByteArray(Charsets.UTF_8)
         val glava = ArrayList<Byte>()
@@ -115,6 +136,18 @@ private class TestniOdjemalec(vrata: Int) {
     }
 
     /** Prebere en okvir streznika; vrne par (opkoda, besedilo). */
+    /** Opkoda prvega okvirja ali -2, ce v [ms] ne pride nic (iztek JE napaka testa, ne uspesna zavrnitev). */
+    fun preberiOpkodoZRokom(ms: Int): Int {
+        vticnica.soTimeout = ms
+        return try {
+            preberiOkvir().first
+        } catch (e: java.net.SocketTimeoutException) {
+            -2
+        } finally {
+            vticnica.soTimeout = 0
+        }
+    }
+
     fun preberiOkvir(): Pair<Int, String> {
         val prvi = vhod.read()
         if (prvi < 0) return Pair(-1, "")
@@ -313,6 +346,71 @@ fun main() {
             opkoda == 0x8 || opkoda == -1
         )
         o.zapri()
+    }
+
+    // 6b) napovedan velik okvir se rezervira ze po glavi, ne sele ko prispe polje (CodeRabbit Mobile st1)
+    run {
+        pocakaj(3000) { streznik.zadrzanoSkupaj() == 0L }
+        val prej = streznik.zadrzanoSkupaj()
+        val o = TestniOdjemalec(vrata)
+        o.posljiSurovo(
+            "GET /cast/ws?ticket=prava HTTP/1.1\r\nHost: test\r\n" +
+                "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+        )
+        o.preberiGlave()
+        val napovedan = 1024L * 1024
+        o.posljiGlavoOkvirja(napovedan)
+        val rezervirano = pocakaj { streznik.zadrzanoSkupaj() - prej >= napovedan }
+        preveri("napovedan 1 MiB okvir je rezerviran ze pred poljem (prej=$prej, zdaj=${streznik.zadrzanoSkupaj()})", rezervirano)
+        o.zapri()
+        val sproscen = pocakaj { streznik.zadrzanoSkupaj() <= prej }
+        preveri("rezervacija se ob zaprtju povezave sprosti (prej=$prej, potem=${streznik.zadrzanoSkupaj()})", sproscen)
+    }
+
+    // 6c) velik okvir se ob pomanjkanju pomnilnika zavrne tudi pod skupnim pragom, skupna zaveza pa steje (CodeRabbit st9, st10)
+    run {
+        fun odpri(): TestniOdjemalec {
+            val o = TestniOdjemalec(vrata)
+            o.posljiSurovo(
+                "GET /cast/ws?ticket=prava HTTP/1.1\r\nHost: test\r\n" +
+                    "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+                    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+            )
+            o.preberiGlave()
+            return o
+        }
+        pocakaj(3000) { streznik.zadrzanoSkupaj() == 0L }
+        val prej = streznik.zadrzanoSkupaj()
+        try {
+            ViriNaprave.preizkus = { deskr, _ -> if (deskr == 0) "pomnilnik" else "" }
+            val a = odpri()
+            a.posljiGlavoOkvirja(700L * 1024)
+            // Zavrnitev se zgodi takoj po glavi; iztek (-2) je napaka, ne uspesna zavrnitev.
+            val opkodaA = a.preberiOpkodoZRokom(5000)
+            preveri("700 KiB okvir ob pomanjkanju pomnilnika takoj konča povezavo (opkoda=$opkodaA)", opkodaA == 0x8)
+            val zadrzanoA = streznik.zadrzanoSkupaj() - prej
+            preveri("zavrnjen 700 KiB okvir ni v zadrzku (zadrzano=$zadrzanoA)", zadrzanoA == 0L)
+            a.zapri()
+
+            // dostopnega je 1,5 MiB: prvi 900 KiB okvir gre, drugi bi skupaj presegel (1,8 MiB)
+            ViriNaprave.preizkus = { deskr, bajtov -> if (deskr == 0 && bajtov > 1536L * 1024) "pomnilnik" else "" }
+            val b1 = odpri()
+            b1.posljiGlavoOkvirja(900L * 1024)
+            val prvi = pocakaj { streznik.zadrzanoSkupaj() - prej == 900L * 1024 }
+            preveri("prvi 900 KiB okvir je rezerviran (zadrzano=${streznik.zadrzanoSkupaj() - prej})", prvi)
+            val b2 = odpri()
+            b2.posljiGlavoOkvirja(900L * 1024)
+            val opkodaB = b2.preberiOpkodoZRokom(5000)
+            preveri("drugi 900 KiB okvir presega skupno zavezo in konča povezavo (opkoda=$opkodaB)", opkodaB == 0x8)
+            val zadrzano = streznik.zadrzanoSkupaj() - prej
+            preveri("v zadrzku je samo prvi okvir (zadrzano=$zadrzano)", zadrzano == 900L * 1024)
+            b1.zapri()
+            b2.zapri()
+            preveri("zadrzek se ob zaprtju sprosti", pocakaj { streznik.zadrzanoSkupaj() <= prej })
+        } finally {
+            ViriNaprave.preizkus = null
+        }
     }
 
     Thread.sleep(400)

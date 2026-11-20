@@ -84,6 +84,9 @@ class HubStreznik(
     /** Koliko bajtov trenutno zadrzujejo vse povezave skupaj (sestavljanje sporocil). */
     private val skupajZadrzano = java.util.concurrent.atomic.AtomicLong(0)
 
+    /** Za preizkuse: koliko bajtov zdaj zadrzujejo vse povezave (vkljucno z rezerviranimi, se neprebranimi okvirji). */
+    internal fun zadrzanoSkupaj(): Long = skupajZadrzano.get()
+
     /**
      * Nepreverjene vticnice: od sprejema do prebrane zahteve (pri WebSocket do veljavne vstopnice, pri toku do predaje
      * HubTokovi, ki preveri svoj kljuc), v vrstnem redu sprejema. Samo zanje veljata fiksni meji
@@ -629,6 +632,23 @@ class HubStreznik(
             return true
         }
 
+        /**
+         * Rezervacija okvirja nad [VELIK_OKVIR_B]: vedno tudi meritev pomnilnika (kot prej, ne glede na skupni prag) in to za SKUPNO
+         * zavezo, vkljucno z ze rezerviranimi, a se neprebranimi okvirji drugih povezav (CodeRabbit st9): sicer bi dve povezavi z
+         * 900 KiB vsaka vsaka posebej presli preverbo, skupaj pa presegli pomnilnik.
+         */
+        private fun rezervirajVelikOkvir(n: Int): Boolean {
+            val skupaj = skupajZadrzano.addAndGet(n.toLong())
+            val razlog = ViriNaprave.preveri(0, skupaj)
+            if (razlog.isNotEmpty()) {
+                skupajZadrzano.addAndGet(-n.toLong())
+                ViriNaprave.zabelezi(razlog, "sporocilo")
+                return false
+            }
+            zadrzano += n
+            return true
+        }
+
         private fun sprostiZadrzek() {
             if (zadrzano > 0) {
                 skupajZadrzano.addAndGet(-zadrzano)
@@ -873,14 +893,20 @@ class HubStreznik(
                     zapri(1009, "sporočilo je preveliko")
                     break
                 }
+                // Veliki okvir se REZERVIRA (ne le preveri) takoj po glavi, PRED branjem maske in polja: sicer bi vec povezav
+                // hkrati z napovedanimi velikimi okvirji slo mimo preverbe, polja pa bi se alocirala sele pozneje
+                // (CodeRabbit Mobile st1). Rezervacijo sprosti konec sporocila ali zapri().
+                var rezervirano = false
                 if (dolzina > VELIK_OKVIR_B) {
-                    // Pomnilnik se preveri PRED rezervacijo polja: clan s 1 MiB okvirjem ne sme zrusiti naprave z malo pomnilnika.
-                    val razlog = ViriNaprave.preveri(0, dolzina)
-                    if (razlog.isNotEmpty()) {
-                        ViriNaprave.zabelezi(razlog, "sporocilo")
+                    if (opkoda != OPKODA_BESEDILO && opkoda != OPKODA_DVOJISKO && opkoda != OPKODA_NADALJEVANJE) {
+                        zapri(1002, "nadzorni okvir je predolg")
+                        break
+                    }
+                    if (!rezervirajVelikOkvir(dolzina.toInt())) {
                         zapri(1013, "naprava naj poskusi znova")
                         break
                     }
+                    rezervirano = true
                 }
 
                 val maska = ByteArray(4)
@@ -907,7 +933,7 @@ class HubStreznik(
                             zapri(1009, "sporočilo je preveliko")
                             return
                         }
-                        if (!zadrziBajte(podatki.size)) {
+                        if (!rezervirano && !zadrziBajte(podatki.size)) {
                             zapri(1013, "naprava naj poskusi znova")
                             return
                         }
