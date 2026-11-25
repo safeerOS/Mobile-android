@@ -89,22 +89,24 @@ class MobileFileProvider : ContentProvider() {
         val path = uri.path ?: throw FileNotFoundException("Prazen URI")
         val ctx = context ?: throw FileNotFoundException("Context ni na voljo")
         
-        val file = if (path.startsWith("/external_files/")) {
-            val base = ctx.getExternalFilesDir(null) ?: ctx.filesDir
-            safeChild(base, path.removePrefix("/external_files/"))
-        } else if (path.startsWith("/javno/")) {
-            // Javna mapa (Prenosi, Dokumenti ...): samo datoteke, ki jih je ta aplikacija sama zapisala
-            // (prenosi brskalnika, prejete prek Safeer Linka) - za odpiranje in deljenje iz seznama prenosov.
-            val ostanek = path.removePrefix("/javno/")
-            val mapa = ostanek.substringBefore('/')
-            if (mapa !in PrenosiUi.JAVNE_MAPE || !ostanek.contains('/')) throw FileNotFoundException("Neznana javna mapa: $mapa")
-            val f = safeChild(android.os.Environment.getExternalStoragePublicDirectory(mapa), ostanek.substringAfter('/'))
-            if (!f.isFile) throw FileNotFoundException("Datoteke ni: $f")
-            return f
-        } else if (path.startsWith("/cache_files/")) {
-            safeChild(ctx.cacheDir, path.removePrefix("/cache_files/"))
-        } else {
-            safeChild(ctx.filesDir, path)
+        // Tedenski pregled 25. 11. 2026 (N4): samo mape, ki jih seznam prenosov res deli (DeljeneDatoteke.koren);
+        // prej je ponudnik dal cel filesDir, zunanje datoteke in cacheDir.
+        val (koren, ostanek) = DeljeneDatoteke.koren(path) ?: throw FileNotFoundException("Mapa ni deljena: $path")
+        val file = when (koren) {
+            DeljeneDatoteke.Koren.ZUNANJA -> {
+                val base = ctx.getExternalFilesDir(null) ?: throw FileNotFoundException("Zunanja mapa ni na voljo")
+                safeChild(File(base, DeljeneDatoteke.ZUNANJA_MAPA), ostanek)
+            }
+            DeljeneDatoteke.Koren.JAVNO -> {
+                // Javna mapa (Prenosi, Dokumenti ...): samo datoteke, ki jih je ta aplikacija sama zapisala
+                // (prenosi brskalnika, prejete prek Safeer Linka) - za odpiranje in deljenje iz seznama prenosov.
+                val mapa = ostanek.substringBefore('/')
+                if (mapa !in PrenosiUi.JAVNE_MAPE || !ostanek.contains('/')) throw FileNotFoundException("Neznana javna mapa: $mapa")
+                val f = safeChild(android.os.Environment.getExternalStoragePublicDirectory(mapa), ostanek.substringAfter('/'))
+                if (!f.isFile) throw FileNotFoundException("Datoteke ni: $f")
+                return f
+            }
+            DeljeneDatoteke.Koren.NOTRANJA -> safeChild(File(ctx.filesDir, DeljeneDatoteke.NOTRANJA_MAPA), ostanek)
         }
         
         if (!file.exists()) {

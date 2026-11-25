@@ -231,10 +231,10 @@ class QrPrijavaActivity : Activity() {
             if (osnova.isBlank()) return null to null
             val povezava = URL(osnova + pot).openConnection() as HttpURLConnection
             if (povezava !is HttpsURLConnection) return null to null
-            val kljuc = kljucKroga()
-            val (tovarna, zaupnik) = HubTls.odjemalec(koda.odtis, kljuc)
-            povezava.sslSocketFactory = tovarna
-            povezava.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+            // Tedenski pregled 25. 11. 2026 (N3): zeton gre v glavo, zato kot ostali klici s kljucem prek
+            // HubTls.zavaruj (brez preusmeritev, samo pripeti odtis). smeZeton je zgoraj ze zahteval, da je
+            // pripeti odtis enak odtisu iz kode (kljucKroga je na telefonu vedno null).
+            val zaupnik = HubTls.zavaruj(povezava, this)
             try {
                 povezava.requestMethod = "POST"
                 povezava.connectTimeout = 5000

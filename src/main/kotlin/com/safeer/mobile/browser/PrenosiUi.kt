@@ -38,7 +38,7 @@ object PrenosiUi {
     private const val MUTED = "#94A3B8"
     private const val ACCENT = "#C7D2FE"
     private const val WARN = "#FCD34D"
-    private const val AUTHORITY = "com.safeer.mobile.browser.fileprovider"
+    private const val AUTHORITY = DeljeneDatoteke.AUTHORITY
 
     /** Javne mape, ki jih ponudnik vsebine sme streci pod /javno/<mapa>/... */
     val JAVNE_MAPE: List<String> = listOf(

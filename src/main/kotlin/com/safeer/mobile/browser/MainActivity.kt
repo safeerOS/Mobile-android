@@ -187,7 +187,13 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                         startActivity(Intent(this, com.safeer.mobile.browser.link.QrPrijavaActivity::class.java).setData(intent.data))
                         return
                     }
-                    targetUrl = intent.dataString
+                    // Tedenski pregled 25. 11. 2026 (N4): naslova nasega ponudnika datotek od zunaj ne odpremo -
+                    // sicer bi tuja aplikacija Safeerja pripravila, da sam odpre svojo zasebno datoteko.
+                    if (DeljeneDatoteke.jeLastna(intent.data?.scheme, intent.data?.authority)) {
+                        android.util.Log.w("SafeerMain", "Zavrnjena namera VIEW z lastnim ponudnikom datotek")
+                    } else {
+                        targetUrl = intent.dataString
+                    }
                 }
                 Intent.ACTION_WEB_SEARCH -> {
                     val query = intent.getStringExtra(android.app.SearchManager.QUERY)

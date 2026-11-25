@@ -26,6 +26,14 @@ java -cp "$TEST_OUTPUT/meja.jar" com.safeer.mobile.browser.link.StreznikMejaTest
 # Tedenski pregled 25. 11. 2026 (S3): naslovi in rok glave sprejema zvoka, kot na TV.
 "$KOTLINC" "$SOURCE_DIR/link/LinkVarnostPravila.kt" "$TEST_DIR/LinkVarnostPravilaTest.kt" -include-runtime -d "$TEST_OUTPUT/link-varnost.jar"
 java -cp "$TEST_OUTPUT/link-varnost.jar" com.safeer.mobile.browser.link.LinkVarnostPravilaTestKt "$PROJECT_DIR/src/main/kotlin"
+# Tedenski pregled 25. 11. 2026 (N1): akcije pripete na commit, checkout brez shranjenega zetona.
+bash "$TEST_DIR/run_workflow_tests.sh" "$PROJECT_DIR"
+# Tedenski pregled 25. 11. 2026 (N3): klici z zetonom Huba ne sledijo preusmeritvam (HubTls.zavaruj).
+"$KOTLINC" "$TEST_DIR/KlicSKljucemTest.kt" -include-runtime -d "$TEST_OUTPUT/klic-kljuc.jar"
+java -cp "$TEST_OUTPUT/klic-kljuc.jar" com.safeer.mobile.browser.link.KlicSKljucemTestKt "$PROJECT_DIR/src/main/kotlin"
+# Tedenski pregled 25. 11. 2026 (N4): lasten ponudnik datotek - namera od zunaj zavrnjena, deljene samo mape prenosov.
+"$KOTLINC" "$SOURCE_DIR/DeljeneDatoteke.kt" "$TEST_DIR/DeljeneDatotekeTest.kt" -include-runtime -d "$TEST_OUTPUT/deljene.jar"
+java -cp "$TEST_OUTPUT/deljene.jar" com.safeer.mobile.browser.DeljeneDatotekeTestKt "$PROJECT_DIR"
 "$KOTLINC" "$SOURCE_DIR/UrlSanitizer.kt" "$SOURCE_DIR/AuthenticationPages.kt" "$TEST_DIR/LoginPolicyTest.kt" -include-runtime -d "$TEST_OUTPUT/login.jar"
 java -jar "$TEST_OUTPUT/login.jar"
 "$KOTLINC" "$SOURCE_DIR/PrijavnaOkna.kt" "$TEST_DIR/PrijavnaOknaTest.kt" -include-runtime -d "$TEST_OUTPUT/prijavna-okna.jar"
