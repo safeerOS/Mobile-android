@@ -16,6 +16,11 @@ trap 'rm -rf "$TEST_OUTPUT"' EXIT
 bash "$TEST_DIR/run_install_tests.sh"
 "$KOTLINC" "$SOURCE_DIR/link/QrPravila.kt" "$TEST_DIR/QrPravilaTest.kt" -include-runtime -d "$TEST_OUTPUT/qr.jar"
 java -cp "$TEST_OUTPUT/qr.jar" com.safeer.mobile.browser.link.QrPravilaTestKt
+# Tedenski pregled 25. 11. 2026 (V3): zetoni in meja povezav streznika datotek, kot na TV.
+"$KOTLINC" "$SOURCE_DIR/link/ZetoniDatotek.kt" "$TEST_DIR/ZetoniDatotekTest.kt" -include-runtime -d "$TEST_OUTPUT/zetoni.jar"
+java -cp "$TEST_OUTPUT/zetoni.jar" com.safeer.mobile.browser.link.ZetoniDatotekTestKt "$PROJECT_DIR/src/main/kotlin"
+"$KOTLINC" "$SOURCE_DIR/link/StreznikMeja.kt" "$TEST_DIR/StreznikMejaTest.kt" -include-runtime -d "$TEST_OUTPUT/meja.jar"
+java -cp "$TEST_OUTPUT/meja.jar" com.safeer.mobile.browser.link.StreznikMejaTestKt "$PROJECT_DIR/src/main/kotlin"
 "$KOTLINC" "$SOURCE_DIR/UrlSanitizer.kt" "$SOURCE_DIR/AuthenticationPages.kt" "$TEST_DIR/LoginPolicyTest.kt" -include-runtime -d "$TEST_OUTPUT/login.jar"
 java -jar "$TEST_OUTPUT/login.jar"
 "$KOTLINC" "$SOURCE_DIR/PrijavnaOkna.kt" "$TEST_DIR/PrijavnaOknaTest.kt" -include-runtime -d "$TEST_OUTPUT/prijavna-okna.jar"

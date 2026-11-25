@@ -15,9 +15,7 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
-import java.security.MessageDigest
 import java.security.SecureRandom
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLServerSocket
 
@@ -41,8 +39,13 @@ object DatotekeStreznik {
     private val tece = AtomicBoolean(false)
     @Volatile private var vticnica: ServerSocket? = null
     @Volatile private var vrata = 0
-    private val zetoni = ConcurrentHashMap<String, String>()
     private val nakljucje = SecureRandom()
+    /** Tedenski pregled 25. 11. 2026 (V3): zetoni z rokom, mejo in preklicem ob izklopu in umiku (kot na TV). */
+    private val zetoni = ZetoniDatotek {
+        val b = ByteArray(24); nakljucje.nextBytes(b)
+        android.util.Base64.encodeToString(b, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+    }
+    private fun zdaj() = android.os.SystemClock.elapsedRealtime()
 
     // ------------------------------------------------------------------ seznam
 
@@ -63,6 +66,8 @@ object DatotekeStreznik {
 
     fun nastavi(context: Context, vklop: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KLJUC_VKLOP, vklop).apply()
+        // Tedenski pregled 25. 11. 2026 (V3): izklop takoj preklice izdane zetone.
+        if (!vklop) zetoni.pocisti()
     }
 
     /** Stanje za stran Linka: {"vklopljeno", "dovoljenje", "deli"} - deli le, ko je oboje. */
@@ -78,6 +83,9 @@ object DatotekeStreznik {
         appContext = context.applicationContext
         val o = JSONObject().put("folder", if (mapa == "root") "" else mapa)
         if (!vklopljeno(context)) return o.put("items", JSONArray()).put("shared", false).put("reason", "off")
+        // Tedenski pregled 25. 11. 2026 (V3): umaknjena naprava ne dobi niti seznama niti zetona (kot na TV).
+        if (idNaprave.isNotBlank() && umaknjena(context, idNaprave))
+            return o.put("items", JSONArray()).put("shared", false).put("reason", "revoked")
         if (!imamoDovoljenje(context)) return o.put("items", JSONArray()).put("shared", false).put("reason", "permission")
         val vnosi = JSONArray()
         var datotek = false
@@ -143,17 +151,19 @@ object DatotekeStreznik {
 
     // ------------------------------------------------------------------ zetoni
 
-    private fun zetonZa(idNaprave: String): String =
-        zetoni.getOrPut(idNaprave.ifBlank { "naprava" }) {
-            val b = ByteArray(24); nakljucje.nextBytes(b)
-            android.util.Base64.encodeToString(b, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
-        }
+    private fun zetonZa(idNaprave: String): String = zetoni.zetonZa(idNaprave, zdaj())
 
+    /**
+     * Zeton velja ob VSAKI zahtevi (GET, HEAD in POST delete/rotate) samo, dokler je deljenje vklopljeno in naprava ni
+     * umaknjena iz kroga - tudi z druge naprave. Brez konteksta ne velja nic.
+     */
     private fun zetonVelja(z: String?): Boolean {
-        if (z.isNullOrBlank()) return false
-        val zb = z.toByteArray()
-        return zetoni.values.any { MessageDigest.isEqual(it.toByteArray(), zb) }
+        val ctx = appContext ?: return false
+        return zetoni.velja(z, zdaj(), deli = { vklopljeno(ctx) }, umaknjena = { umaknjena(ctx, it) })
     }
+
+    private fun umaknjena(ctx: Context, idNaprave: String): Boolean =
+        try { com.safeer.mobile.browser.cast.KrogNaprave.krog(ctx).jeUmaknjen(idNaprave) } catch (_: Throwable) { true }
 
     // ------------------------------------------------------------------ streznik
 
@@ -185,26 +195,50 @@ object DatotekeStreznik {
         vticnica = null
     }
 
+    /** Tedenski pregled 25. 11. 2026 (V3, kot TV): meja socasnih povezav in omejen bazen niti (prej nit na vsako povezavo). */
+    private val meja = StreznikMeja()
+    private val delavciZahtev = java.util.concurrent.ThreadPoolExecutor(0, StreznikMeja.NAJVEC_POVEZAV, 30L, java.util.concurrent.TimeUnit.SECONDS,
+        java.util.concurrent.SynchronousQueue()) { r -> Thread(r, "safeer-datoteke-zahteva").apply { isDaemon = true } }
+
     private fun zanka(v: ServerSocket) {
         while (tece.get() && !v.isClosed) {
             val s = try { v.accept() } catch (_: Throwable) { break }
-            Thread({ postrezi(s) }, "safeer-datoteke-zahteva").apply { isDaemon = true; start() }
+            val naslov = try { s.inetAddress?.hostAddress.orEmpty() } catch (_: Throwable) { "" }
+            // Presezek zapremo takoj, brez niti in brez rokovanja TLS: povezave brez zetona ne smejo porabiti virov.
+            if (!meja.sprejmi(naslov)) { try { s.close() } catch (_: Throwable) { }; continue }
+            try { delavciZahtev.execute { try { postrezi(s) } finally { meja.sprosti(naslov) } } }
+            catch (_: java.util.concurrent.RejectedExecutionException) {
+                meja.sprosti(naslov)
+                try { s.close() } catch (_: Throwable) { }
+            }
         }
     }
 
     private fun postrezi(s: Socket) {
         try {
-            s.soTimeout = 15_000
+            // Tedenski pregled 25. 11. 2026 (V3, kot TV): rokovanje TLS, vrstica zahteve in glave imajo skupen rok in
+            // najvec NAJVEC_GLAV glav - prej 15 s na VSAKO vrstico brez konca in glave brez meje.
+            val zacetek = zdaj()
+            fun ostane(): Int = StreznikMeja.preostanek(zacetek, zdaj())
             val vhod = s.getInputStream()
             val izhod = s.getOutputStream()
-            val prva = preberiVrstico(vhod) ?: return
+            fun vrstica(): String? {
+                val rok = ostane()
+                if (rok <= 0) return null
+                s.soTimeout = rok
+                return preberiVrstico(vhod) { ostane() <= 0 }
+            }
+            val prva = vrstica() ?: return
             val glave = HashMap<String, String>()
             while (true) {
-                val v = preberiVrstico(vhod) ?: break
+                val v = vrstica() ?: break
                 if (v.isEmpty()) break
+                if (glave.size >= StreznikMeja.NAJVEC_GLAV) return
                 val i = v.indexOf(':')
                 if (i > 0) glave[v.substring(0, i).trim().lowercase()] = v.substring(i + 1).trim()
             }
+            if (ostane() <= 0) return
+            s.soTimeout = StreznikMeja.ROK_BRANJA_MS
             val deli = prva.split(" ")
             if (deli.size < 2 || (deli[0] != "GET" && deli[0] != "HEAD" && deli[0] != "POST")) {
                 napaka(izhod, 405, "samo GET ali POST"); return
@@ -287,9 +321,10 @@ object DatotekeStreznik {
         izhod.flush()
     }
 
-    private fun preberiVrstico(vhod: InputStream): String? {
+    private fun preberiVrstico(vhod: InputStream, potekel: () -> Boolean = { false }): String? {
         val sb = StringBuilder()
         while (true) {
+            if (potekel()) return null
             val z = vhod.read()
             if (z < 0) return if (sb.isEmpty()) null else sb.toString()
             if (z == '\n'.code) break
