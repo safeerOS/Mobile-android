@@ -159,8 +159,17 @@ object DatotekeStreznik {
      */
     private fun zetonVelja(z: String?): Boolean {
         val ctx = appContext ?: return false
-        return zetoni.velja(z, zdaj(), deli = { vklopljeno(ctx) }, umaknjena = { umaknjena(ctx, it) })
+        // Dovoljenje »datoteke« se preveri ob vsaki zahtevi kot na TV (Dostop.sme): ko ga uporabnik napravi odvzame,
+        // a naprava ostane v krogu, njen zeton takoj ne velja (tedenski pregled 25. 11. 2026, V3; telefon nima izrecno
+        // poslanih datotek, zato zeton brez dovoljenja preklicemo).
+        return zetoni.velja(z, zdaj(), deli = { vklopljeno(ctx) }, umaknjena = { umaknjena(ctx, it) || !smeDatoteke(ctx, it) })
     }
+
+    private fun smeDatoteke(ctx: Context, idNaprave: String): Boolean = try {
+        com.safeer.mobile.browser.cast.DostopPravila.sme(
+            com.safeer.mobile.browser.cast.DostopShramba.zmoznosti(ctx, idNaprave),
+            com.safeer.mobile.browser.cast.DostopPravila.Zahteva.DATOTEKE)
+    } catch (_: Throwable) { false }
 
     private fun umaknjena(ctx: Context, idNaprave: String): Boolean =
         try { com.safeer.mobile.browser.cast.KrogNaprave.krog(ctx).jeUmaknjen(idNaprave) } catch (_: Throwable) { true }
