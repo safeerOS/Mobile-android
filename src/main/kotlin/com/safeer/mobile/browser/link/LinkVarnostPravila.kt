@@ -30,10 +30,21 @@ object LinkVarnostPravila {
             if (!n.all { it.isLetterOrDigit() && it.code < 128 || it == '.' || it == '-' || it == ':' || it == '_' }) continue
             if (gostiteljPrepovedan(n)) continue
             val b = bajti(n)
+            if (b == null && videtiStevilcno(n)) continue
             if (b != null && lastni.any { enakNaslov(b, it) }) continue
             izid.add(n)
         }
         return izid
+    }
+
+    /**
+     * Zapis, ki je videti stevilcen (zadnja oznaka same stevke ali 0x...), a ni strogi IPv4 ali IPv6: 127.1, 2130706433,
+     * 0177.0.0.1, 0x7f.1. Sistem jih razresi v naslov IP (tudi 127.0.0.1), preverba zanke pa jih ne prepozna. Ime v DNS
+     * nikoli nima stevilcne zadnje oznake (RFC 3696), zato pravega imena to ne izloci (neodvisni pregled 25. 11. 2026).
+     */
+    fun videtiStevilcno(n: String): Boolean {
+        val zadnji = n.trim().trimEnd('.').substringAfterLast('.').lowercase()
+        return zadnji.isNotEmpty() && (zadnji.all { it in '0'..'9' } || zadnji.startsWith("0x"))
     }
 
     /** Ali je rok ([rokMs] od [zacetekMs]) mimo; ura nazaj steje kot mimo. */
@@ -53,6 +64,8 @@ object LinkVarnostPravila {
     private fun bajti(naslov: String): ByteArray? {
         val n = naslov.trim().removePrefix("[").removeSuffix("]").substringBefore('%')
         if (IPV4.matches(n)) {
+            // Vodilna nicla je lahko osmiski zapis (0177 = 127) - tak zapis ni strogi IPv4 (pregled 25. 11. 2026).
+            if (n.split('.').any { it.length > 1 && it[0] == '0' }) return null
             val d = n.split('.').map { it.toInt() }
             if (d.any { it > 255 }) return null
             return ByteArray(4) { d[it].toByte() }

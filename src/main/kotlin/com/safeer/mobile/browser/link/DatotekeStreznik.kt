@@ -206,7 +206,9 @@ object DatotekeStreznik {
 
     /** Tedenski pregled 25. 11. 2026 (V3, kot TV): meja socasnih povezav in omejen bazen niti (prej nit na vsako povezavo). */
     private val meja = StreznikMeja()
-    private val delavciZahtev = java.util.concurrent.ThreadPoolExecutor(0, StreznikMeja.NAJVEC_POVEZAV, 30L, java.util.concurrent.TimeUnit.SECONDS,
+    // Bazen ima 2 niti vec od meje: meja.sprosti tece v niti, se preden se ta vrne v bazen - ob polni meji bi sicer nova
+    // sprejeta povezava dobila RejectedExecutionException in bila zaprta (neodvisni pregled 25. 11. 2026).
+    private val delavciZahtev = java.util.concurrent.ThreadPoolExecutor(0, StreznikMeja.NAJVEC_POVEZAV + 2, 30L, java.util.concurrent.TimeUnit.SECONDS,
         java.util.concurrent.SynchronousQueue()) { r -> Thread(r, "safeer-datoteke-zahteva").apply { isDaemon = true } }
 
     private fun zanka(v: ServerSocket) {
