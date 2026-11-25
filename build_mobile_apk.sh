@@ -22,9 +22,18 @@ fi
 if [ -z "$TOOLS_DIR" ] || [ ! -d "$TOOLS_DIR" ]; then
     echo "❌ Napaka: Orodja za gradnjo niso bila najdena."
     echo "👉 Nastavite okoljsko spremenljivko: export ANDROID_BUILD_TOOLS=/pot/do/orodij"
-    echo "👉 Zahtevana orodja v mapi: kotlinc/, aapt2, r8.jar, android.jar, uber-apk-signer.jar"
+    echo "👉 Zahtevana orodja v mapi: kotlinc/, aapt2, r8.jar, android.jar"
     exit 1
 fi
+# Tedenski pregled 25. 11. 2026 (S2): ta orodja nimajo pripete razlicice ali vsote - izpisemo, od kod so.
+echo "Orodja za gradnjo (brez pripete vsote): $TOOLS_DIR"
+
+# Tedenski pregled 25. 11. 2026 (S2): nov podpisni kljuc samo z izrecno zastavico. Nov kljuc pomeni, da se namescena
+# aplikacija pri uporabnikih ne more posodobiti (drug podpisnik).
+NOV_KLJUC=0
+for arg in "$@"; do
+    if [ "$arg" = "--nov-kljuc" ]; then NOV_KLJUC=1; fi
+done
 
 # 🧪 Testni podpisni ključ Safeer Threat Intelligence se ne sme znajti v objavljeni različici
 if grep -rqs '"safeer-test-' "$DIR/src/main/kotlin" --include=SignedThreatIntel.kt && [ "${SAFEER_ALLOW_TEST_KEY:-}" != "1" ]; then
@@ -134,8 +143,18 @@ if [ -z "$RELEASE_KEY_PASS" ]; then
     exit 1
 fi
 
+# Tedenski pregled 25. 11. 2026 (S2): geslo gre orodjem prek okolja (keytool -storepass:env, apksigner env:), ne v
+# ukazni vrstici - ta je vidna vsem procesom (ps, /proc/<pid>/cmdline). Kot TV (S6, 4. 11. 2026).
+export RELEASE_KEY_PASS
+
 if [ ! -f "$RELEASE_KEYSTORE" ]; then
-    echo "🔑 Generiram namenski produkcijski release keystore ($RELEASE_KEYSTORE)..."
+    if [ "$NOV_KLJUC" != "1" ]; then
+        echo "❌ Podpisni kljuc ni najden: $RELEASE_KEYSTORE" >&2
+        echo "👉 Obnovi keystore iz varnostne kopije. Nov kljuc ne more posodobiti ze namescene aplikacije." >&2
+        echo "👉 Samo za povsem nov kljuc: $0 --nov-kljuc" >&2
+        exit 1
+    fi
+    echo "🔑 Ustvarjam NOV produkcijski keystore ($RELEASE_KEYSTORE) - shrani varnostno kopijo!"
     mkdir -p "$KEYSTORE_DIR"
     keytool -genkeypair -v \
         -keystore "$RELEASE_KEYSTORE" \
@@ -143,25 +162,47 @@ if [ ! -f "$RELEASE_KEYSTORE" ]; then
         -keyalg RSA \
         -keysize 2048 \
         -validity 10000 \
-        -storepass "$RELEASE_KEY_PASS" \
-        -keypass "$RELEASE_KEY_PASS" \
+        -storepass:env RELEASE_KEY_PASS \
+        -keypass:env RELEASE_KEY_PASS \
         -dname "CN=Safeer Mobile Browser, OU=Safeer Security, O=Safeer, L=Ljubljana, ST=Slovenia, C=SI"
 fi
 
-java -jar "$TOOLS_DIR/uber-apk-signer.jar" \
-    --apks "$BUILD_DIR/unaligned.apk" \
-    --out "$BUILD_DIR/signed" \
-    --ks "$RELEASE_KEYSTORE" \
-    --ksAlias "$RELEASE_KEY_ALIAS" \
-    --ksPass "$RELEASE_KEY_PASS" \
-    --ksKeyPass "$RELEASE_KEY_PASS" \
-    --allowResign
-
-SIGNED_APK=$(find "$BUILD_DIR/signed" -type f -iname "*signed.apk" | head -n 1)
-if [ -z "$SIGNED_APK" ] || [ ! -f "$SIGNED_APK" ]; then
-    echo "❌ Napaka: Podpisan APK paket ni bil ustvarjen v $BUILD_DIR/signed"
-    exit 1
+# Tedenski pregled 25. 11. 2026 (S2): namesto uber-apk-signer.jar (brez pripete vsote, gesla v ukazni vrstici)
+# zipalign in apksigner z absolutne poti iz build-tools 34.0.0, prenesenih s pripeto SHA-256 (enako kot TV).
+SDK_DIR="$DIR/.android-sdk"
+BT="$SDK_DIR/build-tools/34.0.0"
+BUILD_TOOLS_ZIP_URL="https://dl.google.com/android/repository/build-tools_r34-linux.zip"
+BUILD_TOOLS_ZIP_SHA256="e858c4b60069d0431051b225d384413b1643e1289b00a4825aed347f25bd510f"
+if [ ! -x "$BT/apksigner" ] || [ ! -x "$BT/zipalign" ]; then
+    echo "⬇️  Prenasam build-tools 34.0.0 (pripeta SHA-256)..."
+    TMP_BT="$(mktemp -d)"
+    curl -fL "$BUILD_TOOLS_ZIP_URL" -o "$TMP_BT/bt.zip"
+    IZRACUNANO="$(sha256sum "$TMP_BT/bt.zip" | awk '{print $1}')"
+    if [ "$IZRACUNANO" != "$BUILD_TOOLS_ZIP_SHA256" ]; then
+        echo "❌ SHA-256 vsota build-tools se ne ujema (pricakovano: $BUILD_TOOLS_ZIP_SHA256, dobljeno: $IZRACUNANO)" >&2
+        rm -rf "$TMP_BT"
+        exit 1
+    fi
+    unzip -q "$TMP_BT/bt.zip" -d "$TMP_BT/razpakirano"
+    rm -rf "$BT"
+    mkdir -p "$SDK_DIR/build-tools"
+    mv "$TMP_BT/razpakirano/android-14" "$BT"
+    rm -rf "$TMP_BT"
 fi
+
+rm -rf "$BUILD_DIR/signed"
+mkdir -p "$BUILD_DIR/signed"
+# v1 ostane vklopljen (kot pri uber-apk-signer) za starejse preverbe podpisa.
+"$BT/zipalign" -p -f 4 "$BUILD_DIR/unaligned.apk" "$BUILD_DIR/signed/aligned.apk"
+SIGNED_APK="$BUILD_DIR/signed/safeer-mobile-signed.apk"
+"$BT/apksigner" sign \
+    --ks "$RELEASE_KEYSTORE" \
+    --ks-key-alias "$RELEASE_KEY_ALIAS" \
+    --ks-pass env:RELEASE_KEY_PASS \
+    --key-pass env:RELEASE_KEY_PASS \
+    --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+    --out "$SIGNED_APK" "$BUILD_DIR/signed/aligned.apk"
+"$BT/apksigner" verify "$SIGNED_APK" || { echo "❌ Podpis APK ni veljaven." >&2; exit 1; }
 
 FINAL_APK="$RELEASE_DIR/safeer-mobile-release.apk"
 cp "$SIGNED_APK" "$FINAL_APK"

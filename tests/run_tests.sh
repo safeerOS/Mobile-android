@@ -14,6 +14,8 @@ TEST_OUTPUT="$(mktemp -d /tmp/safeer-tests.XXXXXX)"
 trap 'rm -rf "$TEST_OUTPUT"' EXIT
 # Tedenski pregled 25. 11. 2026: namestitvena skripta (V1) in pravila kode QR (V2), kot na TV.
 bash "$TEST_DIR/run_install_tests.sh"
+# Tedenski pregled 25. 11. 2026 (S2): podpis APK brez gesla v ukazni vrstici in brez tihega novega kljuca.
+bash "$TEST_DIR/run_podpis_tests.sh"
 "$KOTLINC" "$SOURCE_DIR/link/QrPravila.kt" "$TEST_DIR/QrPravilaTest.kt" -include-runtime -d "$TEST_OUTPUT/qr.jar"
 java -cp "$TEST_OUTPUT/qr.jar" com.safeer.mobile.browser.link.QrPravilaTestKt
 # Tedenski pregled 25. 11. 2026 (V3): zetoni in meja povezav streznika datotek, kot na TV.
