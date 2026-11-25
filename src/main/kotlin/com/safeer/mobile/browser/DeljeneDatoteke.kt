@@ -27,8 +27,8 @@ object DeljeneDatoteke {
      * MOB-FILE (25. 11. 2026): ali naslov namere VIEW od zunaj sme v zavihek. MainActivity je izvozena,
      * zato eksplicitna namera obide filtre - pravilo je dovoljeni seznam, ne filter manifesta.
      * file:// je zavrnjen v celoti: tuja aplikacija bi z njim Safeerja pripravila, da odpre svojo
-     * zasebno datoteko (/data/data, /data/user/0, `..`), aplikacije s targetSdk >= 24 pa file:// ne
-     * smejo poslati (FileUriExposedException). Izjema je samo natanko domaca stran (brez `..`).
+     * zasebno datoteko (/data/data, /data/user/0, `..`), aplikacije s targetSdk >= 24 pa file:// privzeto
+     * ne morejo poslati (StrictMode: FileUriExposedException). Izjema je samo natanko domaca stran (brez `..`).
      */
     fun smeOdZunaj(shema: String?, avtoriteta: String?, naslov: String?): Boolean = when (shema?.lowercase()) {
         "http", "https" -> true
