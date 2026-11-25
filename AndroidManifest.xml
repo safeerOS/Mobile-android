@@ -104,12 +104,12 @@
                 <data android:scheme="https" />
             </intent-filter>
 
-            <!-- Dokumenti PDF z naprave (prenosi, upravitelj datotek, e-posta) se odprejo v vgrajenem pregledovalniku -->
+            <!-- Dokumenti PDF z naprave (prenosi, upravitelj datotek, e-posta) se odprejo v vgrajenem pregledovalniku.
+                 Samo content: file:// od zunaj odpre zasebne datoteke Safeerja (MOB-FILE, DeljeneDatoteke.smeOdZunaj). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
-                <data android:scheme="file" />
                 <data android:mimeType="application/pdf" />
             </intent-filter>
 

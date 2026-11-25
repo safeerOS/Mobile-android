@@ -187,10 +187,10 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                         startActivity(Intent(this, com.safeer.mobile.browser.link.QrPrijavaActivity::class.java).setData(intent.data))
                         return
                     }
-                    // Tedenski pregled 25. 11. 2026 (N4): naslova nasega ponudnika datotek od zunaj ne odpremo -
-                    // sicer bi tuja aplikacija Safeerja pripravila, da sam odpre svojo zasebno datoteko.
-                    if (DeljeneDatoteke.jeLastna(intent.data?.scheme, intent.data?.authority)) {
-                        android.util.Log.w("SafeerMain", "Zavrnjena namera VIEW z lastnim ponudnikom datotek")
+                    // Tedenski pregled 25. 11. 2026 (N4, MOB-FILE): naslova nasega ponudnika datotek in file:// od
+                    // zunaj ne odpremo - sicer bi tuja aplikacija Safeerja pripravila, da sam odpre svojo zasebno datoteko.
+                    if (!DeljeneDatoteke.smeOdZunaj(intent.data?.scheme, intent.data?.authority, intent.dataString)) {
+                        if (intent.data != null) android.util.Log.w("SafeerMain", "Zavrnjena namera VIEW: shema ${intent.data?.scheme}")
                     } else {
                         targetUrl = intent.dataString
                     }

@@ -64,7 +64,7 @@ class LinkSprejemnik : Service() {
         /** Dejavnost v ospredju, ki zna izvesti tipke, drsenje in posnetek (Safeer Control). */
         var naUkaz: Daljinec.VOspredju? = null
         /** Domaca stran brskalnika; tipka Domov z daljinca jo odpre. */
-        const val DOMACA_STRAN = "file:///android_asset/brave_home.html"
+        const val DOMACA_STRAN = com.safeer.mobile.browser.DeljeneDatoteke.DOMACA_STRAN
 
         private var stevecObvestil = 4200
 

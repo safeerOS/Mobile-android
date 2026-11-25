@@ -32,6 +32,7 @@ bash "$TEST_DIR/run_workflow_tests.sh" "$PROJECT_DIR"
 "$KOTLINC" "$TEST_DIR/KlicSKljucemTest.kt" -include-runtime -d "$TEST_OUTPUT/klic-kljuc.jar"
 java -cp "$TEST_OUTPUT/klic-kljuc.jar" com.safeer.mobile.browser.link.KlicSKljucemTestKt "$PROJECT_DIR/src/main/kotlin"
 # Tedenski pregled 25. 11. 2026 (N4): lasten ponudnik datotek - namera od zunaj zavrnjena, deljene samo mape prenosov.
+# MOB-FILE (isti preizkus): namera VIEW od zunaj brez file:// (zasebne mape, .., /data/user/0), filter PDF brez file.
 "$KOTLINC" "$SOURCE_DIR/DeljeneDatoteke.kt" "$TEST_DIR/DeljeneDatotekeTest.kt" -include-runtime -d "$TEST_OUTPUT/deljene.jar"
 java -cp "$TEST_OUTPUT/deljene.jar" com.safeer.mobile.browser.DeljeneDatotekeTestKt "$PROJECT_DIR"
 "$KOTLINC" "$SOURCE_DIR/UrlSanitizer.kt" "$SOURCE_DIR/AuthenticationPages.kt" "$TEST_DIR/LoginPolicyTest.kt" -include-runtime -d "$TEST_OUTPUT/login.jar"

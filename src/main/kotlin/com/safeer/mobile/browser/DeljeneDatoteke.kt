@@ -20,6 +20,23 @@ object DeljeneDatoteke {
         return avtoriteta.substringAfterLast('@').trim().equals(AUTHORITY, ignoreCase = true)
     }
 
+    /** Domaca stran; Safeer Link (Daljinec »home«) jo odpre z eksplicitno namero VIEW na MainActivity. */
+    const val DOMACA_STRAN = "file:///android_asset/brave_home.html"
+
+    /**
+     * MOB-FILE (25. 11. 2026): ali naslov namere VIEW od zunaj sme v zavihek. MainActivity je izvozena,
+     * zato eksplicitna namera obide filtre - pravilo je dovoljeni seznam, ne filter manifesta.
+     * file:// je zavrnjen v celoti: tuja aplikacija bi z njim Safeerja pripravila, da odpre svojo
+     * zasebno datoteko (/data/data, /data/user/0, `..`), aplikacije s targetSdk >= 24 pa file:// ne
+     * smejo poslati (FileUriExposedException). Izjema je samo natanko domaca stran (brez `..`).
+     */
+    fun smeOdZunaj(shema: String?, avtoriteta: String?, naslov: String?): Boolean = when (shema?.lowercase()) {
+        "http", "https" -> true
+        "content" -> !jeLastna(shema, avtoriteta)
+        "file" -> naslov == DOMACA_STRAN
+        else -> false
+    }
+
     /** Koren, iz katerega ponudnik bere. */
     enum class Koren { JAVNO, ZUNANJA, NOTRANJA }
 
