@@ -126,6 +126,29 @@ if [ "${ASSEMBLE_ONLY:-}" = "1" ] || [ "${1:-}" = "--assemble" ] || [ "${1:-}" =
 fi
 
 echo "✍️ 5/5: Podpisujem APK paket z namenskim produkcijskim ključem..."
+# Tedenski pregled 25. 11. 2026 (S2): namesto uber-apk-signer.jar (brez pripete vsote, gesla v ukazni vrstici)
+# zipalign in apksigner z absolutne poti iz build-tools 34.0.0, prenesenih s pripeto SHA-256 (enako kot TV).
+SDK_DIR="$DIR/.android-sdk"
+BT="$SDK_DIR/build-tools/34.0.0"
+BUILD_TOOLS_ZIP_URL="https://dl.google.com/android/repository/build-tools_r34-linux.zip"
+BUILD_TOOLS_ZIP_SHA256="e858c4b60069d0431051b225d384413b1643e1289b00a4825aed347f25bd510f"
+if [ ! -x "$BT/apksigner" ] || [ ! -x "$BT/zipalign" ]; then
+    echo "⬇️  Prenasam build-tools 34.0.0 (pripeta SHA-256)..."
+    TMP_BT="$(mktemp -d)"
+    curl -fL "$BUILD_TOOLS_ZIP_URL" -o "$TMP_BT/bt.zip"
+    IZRACUNANO="$(sha256sum "$TMP_BT/bt.zip" | awk '{print $1}')"
+    if [ "$IZRACUNANO" != "$BUILD_TOOLS_ZIP_SHA256" ]; then
+        echo "❌ SHA-256 vsota build-tools se ne ujema (pricakovano: $BUILD_TOOLS_ZIP_SHA256, dobljeno: $IZRACUNANO)" >&2
+        rm -rf "$TMP_BT"
+        exit 1
+    fi
+    unzip -q "$TMP_BT/bt.zip" -d "$TMP_BT/razpakirano"
+    rm -rf "$BT"
+    mkdir -p "$SDK_DIR/build-tools"
+    mv "$TMP_BT/razpakirano/android-14" "$BT"
+    rm -rf "$TMP_BT"
+fi
+
 KEYSTORE_DIR="$DIR/keystore"
 DEFAULT_KEYSTORE="$KEYSTORE_DIR/safeer-release.jks"
 RELEASE_KEYSTORE="${RELEASE_KEYSTORE:-$DEFAULT_KEYSTORE}"
@@ -165,29 +188,6 @@ if [ ! -f "$RELEASE_KEYSTORE" ]; then
         -storepass:env RELEASE_KEY_PASS \
         -keypass:env RELEASE_KEY_PASS \
         -dname "CN=Safeer Mobile Browser, OU=Safeer Security, O=Safeer, L=Ljubljana, ST=Slovenia, C=SI"
-fi
-
-# Tedenski pregled 25. 11. 2026 (S2): namesto uber-apk-signer.jar (brez pripete vsote, gesla v ukazni vrstici)
-# zipalign in apksigner z absolutne poti iz build-tools 34.0.0, prenesenih s pripeto SHA-256 (enako kot TV).
-SDK_DIR="$DIR/.android-sdk"
-BT="$SDK_DIR/build-tools/34.0.0"
-BUILD_TOOLS_ZIP_URL="https://dl.google.com/android/repository/build-tools_r34-linux.zip"
-BUILD_TOOLS_ZIP_SHA256="e858c4b60069d0431051b225d384413b1643e1289b00a4825aed347f25bd510f"
-if [ ! -x "$BT/apksigner" ] || [ ! -x "$BT/zipalign" ]; then
-    echo "⬇️  Prenasam build-tools 34.0.0 (pripeta SHA-256)..."
-    TMP_BT="$(mktemp -d)"
-    curl -fL "$BUILD_TOOLS_ZIP_URL" -o "$TMP_BT/bt.zip"
-    IZRACUNANO="$(sha256sum "$TMP_BT/bt.zip" | awk '{print $1}')"
-    if [ "$IZRACUNANO" != "$BUILD_TOOLS_ZIP_SHA256" ]; then
-        echo "❌ SHA-256 vsota build-tools se ne ujema (pricakovano: $BUILD_TOOLS_ZIP_SHA256, dobljeno: $IZRACUNANO)" >&2
-        rm -rf "$TMP_BT"
-        exit 1
-    fi
-    unzip -q "$TMP_BT/bt.zip" -d "$TMP_BT/razpakirano"
-    rm -rf "$BT"
-    mkdir -p "$SDK_DIR/build-tools"
-    mv "$TMP_BT/razpakirano/android-14" "$BT"
-    rm -rf "$TMP_BT"
 fi
 
 rm -rf "$BUILD_DIR/signed"
