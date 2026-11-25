@@ -75,6 +75,9 @@
         android:theme="@style/AppTheme"
         android:hardwareAccelerated="true"
         android:largeHeap="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/izvoz_podatkov"
+        android:fullBackupContent="@xml/varnostna_kopija"
         android:usesCleartextTraffic="true"
         android:supportsRtl="true">
 

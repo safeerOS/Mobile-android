@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# Preizkus install_safeer.sh brez omrezja in brez telefona (NALOGE-install): sintaksa, preverba SHA-256 s ponarejenimi
+# SHA256SUMS, ustavitev brez SHA256SUMS ali ob napaki prenosa, pravi paket za zagon. curl in adb sta nadomestka.
+# Nadomestki curl/adb in TEMP_* v podlupinah klice glavno() iz install_safeer.sh (source) - shellcheck tega ne vidi
+# (SC2317 nedosegljivo, SC2034 neuporabljeno sta tu lazna).
+# shellcheck disable=SC2317,SC2034
+set -uo pipefail
+TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
+SKRIPTA="$(dirname "$TEST_DIR")/install_safeer.sh"
+D="$(mktemp -d)"
+trap 'rm -rf "$D"' EXIT
+napak=0
+preveri() { if [ "$2" = "$3" ]; then echo "  OK   $1"; else echo "  NAPAKA $1: pricakovano $2, dobljeno $3"; napak=$((napak + 1)); fi; }
+# Izid pogoja kot 0/1 (tedenski pregled 4. 11. 2026, shellcheck SC2319): »[ ... ]; preveri ... $?« je bral izid pogoja
+# po nakljucju vrstnega reda; ena dodana vrstica vmes bi tiho preverila drug ukaz.
+pogoj() { if "$@"; then echo 0; else echo 1; fi; }
+
+bash -n "$SKRIPTA"; preveri "bash -n" 0 $?
+
+# shellcheck source=/dev/null
+source "$SKRIPTA"
+# Skripta sama vklopi »set -e«; preizkus pricakovane neuspehe preveri sam.
+set +e
+# Primeri spodaj nadomestijo odtis_apk; apksigner (absolutna pot) preizkusi preizkusi_podpisnika na koncu.
+najdi_apksigner() { printf '%s' /lazni/apksigner; }
+IME="safeer-browser-android-1.0.37.apk"
+GH="https://github.com/safeerOS/Mobile-android/releases/download/v1.0.37"
+printf 'ponarejen apk' > "$D/$IME"
+PRAVA="$(sha256sum "$D/$IME" | awk '{print $1}')"
+
+printf '%s  %s\n' "$PRAVA" "$IME" > "$D/prava"
+preveri_sha256 "$D/$IME" "$D/prava" "$IME" > "$D/izpis" 2>&1; preveri "pravilna vsota (»  ime«) -> naprej" 0 $?
+printf '%s *%s\n' "$PRAVA" "$IME" > "$D/zvezdica"
+preveri_sha256 "$D/$IME" "$D/zvezdica" "$IME" > "$D/izpis" 2>&1; preveri "pravilna vsota (»*ime«) -> naprej" 0 $?
+printf '%064d  %s\n' 0 "$IME" > "$D/napacna"
+preveri_sha256 "$D/$IME" "$D/napacna" "$IME" > "$D/izpis" 2>&1; preveri "napacna vsota -> 1" 1 $?
+grep -q "NE ujema" "$D/izpis"; preveri "napacna vsota: sporocilo" 0 $?
+printf '%s  %s\n' "$PRAVA" "drug.apk" > "$D/brez"
+preveri_sha256 "$D/$IME" "$D/brez" "$IME" > "$D/izpis" 2>&1; preveri "manjkajoca vrstica -> 1" 1 $?
+: > "$D/prazna"
+preveri_sha256 "$D/$IME" "$D/prazna" "$IME" > "$D/izpis" 2>&1; preveri "prazna SHA256SUMS -> 1" 1 $?
+printf '%s  %s\n' "$PRAVA" "x-$IME" > "$D/podobna"
+preveri_sha256 "$D/$IME" "$D/podobna" "$IME" > "$D/izpis" 2>&1; preveri "podobno ime ne velja -> 1" 1 $?
+
+# Pregled Grok 7: APK po imenu paketa in samo z GitHuba - ne prvi .apk v izdaji.
+VEC='{"browser_download_url": "'"$GH"'/safeer-debug.apk", "browser_download_url": "'"$GH"'/'"$IME"'", "browser_download_url": "'"$GH"'/SHA256SUMS"}'
+preveri "vec APK: pravi po imenu" "$GH/$IME" "$(naslov_iz_izdaje "$VEC" "$VZOREC_APK")"
+preveri "vec APK: SHA256SUMS" "$GH/SHA256SUMS" "$(naslov_iz_izdaje "$VEC" "$VZOREC_SHA")"
+TUJ='{"browser_download_url": "https://x.test/'"$IME"'", "browser_download_url": "https://x.test/SHA256SUMS"}'
+preveri "tuj gostitelj: ni APK" "" "$(naslov_iz_izdaje "$TUJ" "$VZOREC_APK")"
+preveri "tuj gostitelj: ni SHA256SUMS" "" "$(naslov_iz_izdaje "$TUJ" "$VZOREC_SHA")"
+DRUG='{"browser_download_url": "https://github.com/drug/repo/releases/download/v1/'"$IME"'"}'
+preveri "drug repozitorij: ni APK" "" "$(naslov_iz_izdaje "$DRUG" "$VZOREC_APK")"
+PODOBEN='{"browser_download_url": "'"$GH"'/safeer-browser-android-1.0.37-debug.apk"}'
+preveri "razlicica s pripono: ni APK" "" "$(naslov_iz_izdaje "$PODOBEN" "$VZOREC_APK")"
+# Tedenski pregled 4. 11. 2026 (N10): glavno() vedno prenasa v svojo mapo mktemp -d - TEMP_APK iz okolja ne velja vec.
+# Ali se je APK prenesel, zato povedo klici nadomestka curl (»-o«), ne pot datoteke.
+( curl() { echo "curl $*" >> "$D/curl_tuj"; printf '%s' "$TUJ"; }; TEMP_APK="$D/t.apk"; glavno ) > "$D/izpis" 2>&1
+preveri "tuj gostitelj -> 1" 1 $?
+grep -q "nima APK z imenom safeer-browser-android" "$D/izpis"; preveri "tuj gostitelj: sporocilo o imenu APK" 0 $?
+! grep -q -- " -o " "$D/curl_tuj"; preveri "tuj gostitelj: APK se ne prenese" 0 $?
+preveri "TEMP_APK iz okolja se ne uporabi" 0 "$(pogoj [ ! -e "$D/t.apk" ])"
+( curl() { return 22; }; glavno ) > "$D/izpis" 2>&1
+preveri "brez odgovora GitHuba -> 1" 1 $?
+grep -q "GitHub ni odgovoril" "$D/izpis"; preveri "brez odgovora: sporocilo" 0 $?
+
+# glavno() z nadomestnim curl: izdaja brez SHA256SUMS -> ustavi pred prenosom APK.
+( curl() { echo "curl $*" >> "$D/curl_brez"; printf '{"browser_download_url": "%s/%s"}' "$GH" "$IME"; }; glavno ) > "$D/izpis" 2>&1
+preveri "izdaja brez SHA256SUMS -> 1" 1 $?
+grep -q "nima datoteke SHA256SUMS" "$D/izpis"; preveri "brez SHA256SUMS: sporocilo" 0 $?
+! grep -q -- " -o " "$D/curl_brez"; preveri "brez SHA256SUMS: APK se ne prenese" 0 $?
+
+# Napaka prenosa SHA256SUMS (curl -f vrne napako) -> ustavi, adb se ne poklice.
+( curl() {
+      case "$*" in
+          *api.github.com*) printf '{"browser_download_url": "%s/%s", "browser_download_url": "%s/SHA256SUMS"}' "$GH" "$IME" "$GH" ;;
+          *-fLs*) return 22 ;;
+          *) local o=""; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && o="$2"; shift; done; printf 'ponarejen apk' > "$o" ;;
+      esac
+  }
+  adb() { echo "ADB POKLICAN"; }
+  glavno ) > "$D/izpis" 2>&1
+preveri "napaka prenosa SHA256SUMS -> 1" 1 $?
+grep -q "Napaka pri prenosu SHA256SUMS" "$D/izpis"; preveri "napaka prenosa: sporocilo" 0 $?
+! grep -q "ADB POKLICAN" "$D/izpis"; preveri "napaka prenosa: adb se ne poklice" 0 $?
+
+# Pravilna izdaja: nadomestki za GitHub (curl), podpisnika (odtis_apk) in naprave (adb; LAZNE_NAPRAVE = seznam).
+lazni_curl() {
+    case "$*" in
+        *api.github.com*) printf '{"browser_download_url": "%s/%s", "browser_download_url": "%s/SHA256SUMS"}' "$GH" "$IME" "$GH" ;;
+        *) local o=""; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && o="$2"; shift; done
+           case "$o" in *SHA*) printf '%s  %s\n' "$PRAVA" "$IME" > "$o" ;; *) printf 'ponarejen apk' > "$o" ;; esac ;;
+    esac
+}
+lazni_adb_naprave() {
+    case "$1" in
+        devices) printf 'List of devices attached\n'; for n in $LAZNE_NAPRAVE; do printf '%s\tdevice\n' "$n"; done ;;
+        *) echo "adb $*" ;;
+    esac
+}
+( curl() { lazni_curl "$@"; }; odtis_apk() { printf '%s' "$MOBILNI_ODTIS"; }; LAZNE_NAPRAVE="NAPRAVA"
+  adb() { lazni_adb_naprave "$@"; }; glavno ) > "$D/izpis" 2>&1
+preveri "pravilna izdaja -> 0" 0 $?
+grep -q "celovitost potrjena" "$D/izpis"; preveri "pravilna izdaja: vsota preverjena" 0 $?
+grep -q "Podpisnik Safeer potrjen" "$D/izpis"; preveri "pravilna izdaja: podpisnik preverjen" 0 $?
+grep -q "adb -s NAPRAVA install -r" "$D/izpis"; preveri "edina naprava: namesti nanjo" 0 $?
+grep -q "am start -n com.safeer.mobile.browser/.MainActivity" "$D/izpis"; preveri "zagon com.safeer.mobile.browser/.MainActivity" 0 $?
+! grep -q "si.safeer.tv/.MainActivity" "$D/izpis"; preveri "ne zazene TV brskalnika si.safeer.tv" 0 $?
+! grep -q "pm grant" "$D/izpis"; preveri "paket brez Safeer Vnosa ne dobi WRITE_SECURE_SETTINGS" 0 $?
+
+# S5: tuj podpisnik (ali odtisa ni mogoce prebrati) -> brez namestitve.
+for ODTIS_LAZNI in "0000000000000000000000000000000000000000000000000000000000000000" ""; do
+    ( curl() { lazni_curl "$@"; }; odtis_apk() { printf '%s' "$ODTIS_LAZNI"; }; LAZNE_NAPRAVE="NAPRAVA"
+      adb() { lazni_adb_naprave "$@"; }; glavno ) > "$D/izpis" 2>&1
+    preveri "podpisnik '${ODTIS_LAZNI:0:4}': -> 1" 1 $?
+    ! grep -q " install " "$D/izpis"; preveri "podpisnik '${ODTIS_LAZNI:0:4}': ni namestitve" 0 $?
+done
+# Pravi odtis TV/telefona se ne zamenjata (oba iz apksigner, 4. 11. 2026).
+preveri "odtis telefona ni odtis TV" 1 "$(pogoj [ "$MOBILNI_ODTIS" = "$SAFEER_ODTIS" ])"
+
+# S3: vec naprav brez izbire -> prekini (nikoli prva); izbrana naprava -> samo ta; izbrane ni -> prekini.
+( curl() { lazni_curl "$@"; }; odtis_apk() { printf '%s' "$MOBILNI_ODTIS"; }; LAZNE_NAPRAVE="TV1 TELEFON"
+  adb() { lazni_adb_naprave "$@"; }; glavno ) > "$D/izpis" 2>&1
+preveri "dve napravi brez izbire -> 1" 1 $?
+! grep -q " install " "$D/izpis"; preveri "dve napravi brez izbire: ni namestitve" 0 $?
+grep -q "izberi telefon" "$D/izpis"; preveri "dve napravi: sporocilo" 0 $?
+( curl() { lazni_curl "$@"; }; odtis_apk() { printf '%s' "$MOBILNI_ODTIS"; }; LAZNE_NAPRAVE="TV1 TELEFON"
+  adb() { lazni_adb_naprave "$@"; }; glavno TELEFON ) > "$D/izpis" 2>&1
+preveri "izbrana naprava -> 0" 0 $?
+grep -q "adb -s TELEFON install -r" "$D/izpis"; preveri "izbrana naprava: namesti nanjo" 0 $?
+! grep -q "adb -s TV1 " "$D/izpis"; preveri "izbrana naprava: druge ne dotakne" 0 $?
+( curl() { lazni_curl "$@"; }; odtis_apk() { printf '%s' "$MOBILNI_ODTIS"; }; LAZNE_NAPRAVE="TV1"
+  adb() { lazni_adb_naprave "$@"; }; glavno TELEFON ) > "$D/izpis" 2>&1
+preveri "izbrane naprave ni -> 1" 1 $?
+! grep -q " install " "$D/izpis"; preveri "izbrane naprave ni: ni namestitve" 0 $?
+
+# Safeer Vnos z eno privolitvijo (25. 10. 2026): --upravljanje podeli WRITE_SECURE_SETTINGS, na Androidu 13+ odklene
+# omejene nastavitve, storitve pa NE vklopi (to stori aplikacija ob privolitvi). adb je nadomestek, ki belezi klice;
+# LAZNI_SDK je razlicica Androida, LAZNI_VNOS=1 pomeni, da paket ima storitev Safeer Vnos.
+lazni_adb() {
+    echo "adb $*" >> "$D/klici"
+    case "$*" in
+        *dumpsys*) if [ "$LAZNI_VNOS" = 1 ]; then echo "        si.safeer.os/si.safeer.tv.link.VnosStoritev filter 1a2b"; fi ;;
+        *getprop*) printf '%s\r\n' "$LAZNI_SDK" ;;
+    esac
+    return 0
+}
+# Odtis podpisa paketa: nadomestek (LAZNI_ODTIS), privzeto Safeerjev.
+LAZNI_ODTIS="$SAFEER_ODTIS"
+odtis_paketa() { printf '%s' "$LAZNI_ODTIS"; }
+( LAZNI_SDK=34; LAZNI_VNOS=1; adb() { lazni_adb "$@"; }; : > "$D/klici"; omogoci_upravljanje 10.0.0.2:5555 si.safeer.os ) > "$D/izpis" 2>&1
+preveri "upravljanje Android 14 -> 0" 0 $?
+grep -q "shell pm grant si.safeer.os android.permission.WRITE_SECURE_SETTINGS" "$D/klici"; preveri "Android 14: pm grant" 0 $?
+grep -q "shell appops set si.safeer.os ACCESS_RESTRICTED_SETTINGS allow" "$D/klici"; preveri "Android 14: odklep omejenih" 0 $?
+! grep -q "enabled_accessibility_services" "$D/klici"; preveri "skripta storitve ne vklopi sama" 0 $?
+grep -q "appops set si.safeer.os ACCESS_RESTRICTED_SETTINGS default" "$D/izpis"; preveri "Android 14: preklic pove tudi appops" 0 $?
+# Pregled tv-vnos 6: ukazna injekcija prek adb shell, regex v grep, paket s tujim podpisom.
+( LAZNI_SDK=34; LAZNI_VNOS=1; adb() { lazni_adb "$@"; }; : > "$D/klici"; omogoci_upravljanje 10.0.0.2:5555 'si.safeer.os;settings put global adb_enabled 1' ) > "$D/izpis" 2>&1
+preveri "paket z ukazom -> 1" 1 $?
+preveri "paket z ukazom: adb se ne poklice" 0 "$(pogoj [ ! -s "$D/klici" ])"
+( LAZNI_SDK=34; LAZNI_VNOS=1; adb() { lazni_adb "$@"; }; : > "$D/klici"; omogoci_upravljanje '10.0.0.2:5555 shell reboot' si.safeer.os ) > "$D/izpis" 2>&1
+preveri "naprava s presledkom -> 1" 1 $?
+preveri "naprava s presledkom: adb se ne poklice" 0 "$(pogoj [ ! -s "$D/klici" ])"
+( LAZNI_SDK=34; adb() { echo "adb $*" >> "$D/klici"; case "$*" in *dumpsys*) echo "siXsafeerXos/siXsafeerXtvXlinkXVnosStoritev" ;; esac; return 0; }
+  : > "$D/klici"; omogoci_upravljanje 10.0.0.2:5555 si.safeer.os ) > "$D/izpis" 2>&1
+! grep -q "pm grant" "$D/klici"; preveri "ime storitve dobesedno (pika ni poljuben znak)" 0 $?
+( LAZNI_SDK=34; LAZNI_VNOS=1; LAZNI_ODTIS="0000000000000000000000000000000000000000000000000000000000000000"
+  adb() { lazni_adb "$@"; }; : > "$D/klici"; omogoci_upravljanje 10.0.0.2:5555 si.safeer.os ) > "$D/izpis" 2>&1
+preveri "tuj podpis -> 1" 1 $?
+! grep -q "pm grant\|appops" "$D/klici"; preveri "tuj podpis: nic se ne podeli" 0 $?
+( LAZNI_SDK=34; LAZNI_VNOS=1; LAZNI_ODTIS=""; adb() { lazni_adb "$@"; }; : > "$D/klici"; omogoci_upravljanje 10.0.0.2:5555 si.safeer.os ) > "$D/izpis" 2>&1
+preveri "podpisa ni mogoce prebrati -> 1" 1 $?
+! grep -q "pm grant" "$D/klici"; preveri "podpis neznan: nic se ne podeli" 0 $?
+( LAZNI_SDK=30; LAZNI_VNOS=1; adb() { lazni_adb "$@"; }; : > "$D/klici"; omogoci_upravljanje 10.0.0.2:5555 si.safeer.os ) > "$D/izpis" 2>&1
+preveri "upravljanje Android TV 11 -> 0" 0 $?
+grep -q "pm grant si.safeer.os" "$D/klici"; preveri "Android TV 11: pm grant" 0 $?
+! grep -q "appops" "$D/klici"; preveri "Android TV 11: brez appops (omejitve ni)" 0 $?
+( LAZNI_SDK=34; LAZNI_VNOS=0; adb() { lazni_adb "$@"; }; : > "$D/klici"; omogoci_upravljanje 10.0.0.2:5555 si.safeer.tv ) > "$D/izpis" 2>&1
+preveri "paket brez Safeer Vnosa -> 0" 0 $?
+! grep -q "pm grant\|appops" "$D/klici"; preveri "paket brez Safeer Vnosa: nic se ne podeli" 0 $?
+( adb() { case "$*" in *dumpsys*) echo "si.safeer.os/si.safeer.tv.link.VnosStoritev" ;; *"pm grant"*) return 1 ;; esac; }
+  omogoci_upravljanje 10.0.0.2:5555 si.safeer.os ) > "$D/izpis" 2>&1
+preveri "neuspel pm grant -> 1" 1 $?
+
+# Neodvisni pregled 4. 11. 2026 09:10: podpisnika bere samo apksigner z absolutne poti (ne keytool, ki vidi le v1).
+echo "== podpisnik (locen proces, lazna orodja)"
+# preveri_podpis (kot na telefonu, 4. 11. 2026): tuj podpisnik, neberljiv podpis in pravi podpisnik.
+D_P="$(mktemp -d)"; printf 'apk' > "$D_P/a.apk"
+( odtis_apk() { printf '%s' "AAAA"; }; preveri_podpis "$D_P/a.apk" ) > "$D_P/izpis" 2>&1; preveri "preveri_podpis: tuj podpisnik -> 1" 1 $?
+grep -q "ni podpisan s ključem Safeer" "$D_P/izpis"; preveri "preveri_podpis: tuj podpisnik, razlog" 0 $?
+( odtis_apk() { :; }; najdi_apksigner() { return 1; }; preveri_podpis "$D_P/a.apk" ) > "$D_P/izpis" 2>&1; preveri "preveri_podpis: brez apksignerja -> 1" 1 $?
+grep -q "apksigner" "$D_P/izpis"; preveri "preveri_podpis: brez apksignerja, razlog" 0 $?
+( odtis_apk() { printf '%s' "$MOBILNI_ODTIS"; }; preveri_podpis "$D_P/a.apk" ) > "$D_P/izpis" 2>&1; preveri "preveri_podpis: podpisnik Safeer -> 0" 0 $?
+rm -rf "$D_P"
+
+# shellcheck source=tests/lazna_namestitev.sh
+source "$TEST_DIR/lazna_namestitev.sh"
+preizkusi_podpisnika "$SKRIPTA" '{"browser_download_url": "'"$GH"'/'"$IME"'", "browser_download_url": "'"$GH"'/SHA256SUMS"}' "$IME" "$MOBILNI_ODTIS"
+
+if [ "$napak" -eq 0 ]; then echo "INSTALL TESTI: OK"; else echo "INSTALL TESTI: $napak napak"; exit 1; fi

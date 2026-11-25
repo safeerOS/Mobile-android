@@ -12,6 +12,10 @@ if ! [[ "$JAVA_MAJOR" =~ ^[0-9]+$ ]] || [ "$JAVA_MAJOR" -lt 17 ]; then
 fi
 TEST_OUTPUT="$(mktemp -d /tmp/safeer-tests.XXXXXX)"
 trap 'rm -rf "$TEST_OUTPUT"' EXIT
+# Tedenski pregled 25. 11. 2026: namestitvena skripta (V1) in pravila kode QR (V2), kot na TV.
+bash "$TEST_DIR/run_install_tests.sh"
+"$KOTLINC" "$SOURCE_DIR/link/QrPravila.kt" "$TEST_DIR/QrPravilaTest.kt" -include-runtime -d "$TEST_OUTPUT/qr.jar"
+java -cp "$TEST_OUTPUT/qr.jar" com.safeer.mobile.browser.link.QrPravilaTestKt
 "$KOTLINC" "$SOURCE_DIR/UrlSanitizer.kt" "$SOURCE_DIR/AuthenticationPages.kt" "$TEST_DIR/LoginPolicyTest.kt" -include-runtime -d "$TEST_OUTPUT/login.jar"
 java -jar "$TEST_OUTPUT/login.jar"
 "$KOTLINC" "$SOURCE_DIR/PrijavnaOkna.kt" "$TEST_DIR/PrijavnaOknaTest.kt" -include-runtime -d "$TEST_OUTPUT/prijavna-okna.jar"
