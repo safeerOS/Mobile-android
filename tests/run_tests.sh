@@ -28,6 +28,8 @@ java -cp "$TEST_OUTPUT/meja.jar" com.safeer.mobile.browser.link.StreznikMejaTest
 java -cp "$TEST_OUTPUT/link-varnost.jar" com.safeer.mobile.browser.link.LinkVarnostPravilaTestKt "$PROJECT_DIR/src/main/kotlin"
 # Tedenski pregled 25. 11. 2026 (N1): akcije pripete na commit, checkout brez shranjenega zetona.
 bash "$TEST_DIR/run_workflow_tests.sh" "$PROJECT_DIR"
+# 25. 11. 2026 (OnePlus 9: PDF pregledovalnik prazen, pdfjsLib undefined): PDF.js build/ v gitu, skripte v PDF izklopljene (kot TV).
+python3 "$TEST_DIR/preveri_pdfjs.py"
 # Tedenski pregled 25. 11. 2026 (N3): klici z zetonom Huba ne sledijo preusmeritvam (HubTls.zavaruj).
 "$KOTLINC" "$TEST_DIR/KlicSKljucemTest.kt" -include-runtime -d "$TEST_OUTPUT/klic-kljuc.jar"
 java -cp "$TEST_OUTPUT/klic-kljuc.jar" com.safeer.mobile.browser.link.KlicSKljucemTestKt "$PROJECT_DIR/src/main/kotlin"

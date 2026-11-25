@@ -45,3 +45,6 @@ tests/.astra/
 .settings/
 .android-sdk
 
+# PDF.js 5.4.149 (uradni pdfjs-5.4.149-dist.zip, kot Android-tv 8069a0a7): pregledovalnik brez build/ ne dela.
+# Najdeno 25. 11. 2026 na OnePlus 9: globalThis.pdfjsLib undefined - build/ je bil izlocen z .gitignore.
+!assets/pdfjs/build/
