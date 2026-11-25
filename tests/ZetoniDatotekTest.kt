@@ -109,7 +109,8 @@ private fun uporaba(izvorna: String) {
     check(izvorna.isNotEmpty()) { "NAPAKA: manjka pot do izvorne kode (argument)" }
     val vir = java.io.File(izvorna, "com/safeer/mobile/browser/link/DatotekeStreznik.kt").readText()
     preveri("zetoni so ZetoniDatotek", vir.contains("private val zetoni = ZetoniDatotek {"))
-    preveri("preverba dobi stikalo in umik", vir.contains("zetoni.velja(z, zdaj(), deli = { vklopljeno(ctx) }, umaknjena = { umaknjena(ctx, it) })"))
+    preveri("preverba dobi stikalo in umik", vir.contains("zetoni.velja(z, zdaj(), deli = { vklopljeno(ctx) }, umaknjena = { umaknjena(ctx, it) || !smeDatoteke(ctx, it) })"))
+    preveri("zeton velja samo z dovoljenjem datoteke", vir.contains("DostopPravila.Zahteva.DATOTEKE") && vir.contains("DostopShramba.zmoznosti(ctx, idNaprave)"))
     preveri("umik iz kroga Link Core", vir.contains("KrogNaprave.krog(ctx).jeUmaknjen(idNaprave)"))
     preveri("izklop preklice zetone", vir.contains("if (!vklop) zetoni.pocisti()"))
     val postrezi = vir.substringAfter("private fun postrezi(s: Socket)").substringBefore("private fun preskoci(")
