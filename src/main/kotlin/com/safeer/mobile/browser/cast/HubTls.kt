@@ -202,14 +202,13 @@ object HubTls {
      * ki si ga je zapomnila ob seznanitvi. Brez odtisa ali brez TLS povezave ne odpre -
      * zeton in vsebina ne smeta nikoli potovati v cistem besedilu.
      */
-    // Tedenski pregled 25. 11. 2026 (N3): vrne zaupnika, da klicatelj (QR prijava) prebere videni odtis.
-    fun zavaruj(povezava: HttpURLConnection, context: Context): Zaupnik {
+    fun zavaruj(povezava: HttpURLConnection, context: Context) {
         if (povezava !is HttpsURLConnection) throw java.io.IOException("Safeer Link: Hub brez TLS - posodobi Safeer na gostitelju")
         val odtis = pripetiOdtis(context)
             ?: throw java.io.IOException("Safeer Link: naprava s tem Hubom se ni seznanjena (ni odtisa potrdila)")
         // Zeton je v poti ali glavi: preusmeritev bi ga odnesla drugam (S6, 5. 11. 2026); 3xx je za klicatelja napaka.
         povezava.instanceFollowRedirects = false
-        return pripravi(povezava, odtis)!!
+        pripravi(povezava, odtis)
     }
 
     /**

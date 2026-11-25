@@ -8,8 +8,7 @@ import java.io.File
  * HubTls je samo za Android (Context, Base64), zato preverjamo vir:
  *  - HubTls.zavaruj izklopi preusmeritve,
  *  - v vsaki datoteki z zetonom ima vsak openConnection svoj HubTls.zavaruj,
- *  - v QR prijavi je zavaruj med openConnection in glavo z zetonom (in ni lastne tovarne vticnic,
- *    ki bi pripeti odtis zamenjala z drugim).
+ *  - v QR prijavi je zavaruj med openConnection in glavo z zetonom, tovarna vticnic pa pripne odtis iz kode.
  * Uporaba: KlicSKljucemTestKt <src/main/kotlin>
  */
 private var napak = 0
@@ -53,7 +52,7 @@ fun main(args: Array<String>) {
     val zavaruj = klic.indexOf("HubTls.zavaruj(povezava")
     val zeton = klic.indexOf("x-safeer-token", ignoreCase = true)
     preveri("QR klic: zavaruj po openConnection in pred glavo z zetonom", odpri in 0 until zavaruj && zavaruj < zeton)
-    preveri("QR klic: brez lastne tovarne vticnic mimo zavaruj", !klic.contains("sslSocketFactory ="))
+    preveri("QR klic: tovarna vticnic pripne odtis iz kode", klic.contains("HubTls.odjemalec(koda.odtis"))
     preveri("QR klic: ne vklopi preusmeritev", !klic.contains("instanceFollowRedirects = true"))
 
     if (napak > 0) { println("KlicSKljucemTest: $napak napak"); kotlin.system.exitProcess(1) }

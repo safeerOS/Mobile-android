@@ -25,8 +25,14 @@ for d in datoteke:
             napake.append(f"{d.name}:{i + 1}: ni pripeta na commit: {akcija}")
         if akcija.split("@")[0] == "actions/checkout":
             checkouti += 1
-            # Blok koraka: vrstice do naslednjega koraka (- na enakem ali manjsem zamiku).
+            # Blok koraka: vrstice do naslednjega koraka (- na enakem ali manjsem zamiku). Zamik je zamik
+            # pomisljaja koraka; ce uses: ni v vrstici s pomisljajem (- name: ... / uses:), ga poiscemo nazaj.
             zamik = len(m.group(1))
+            if not re.match(r"^\s*-\s", v):
+                for w in reversed(vrstice[:i]):
+                    if re.match(r"^\s*-\s", w):
+                        zamik = len(w) - len(w.lstrip())
+                        break
             blok = []
             for w in vrstice[i + 1:]:
                 if w.strip() and (len(w) - len(w.lstrip())) <= zamik:
