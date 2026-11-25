@@ -45,14 +45,21 @@ object ZvokSprejemnik {
 
     fun tece(): Boolean = vticnica != null
 
+    /** Naslovi IP tega telefona (vsi omrezni vmesniki), za izlocitev iz seznama racunalnikovih naslovov (S3, kot TV). */
+    private fun lastniNaslovi(): List<ByteArray> = try {
+        java.net.NetworkInterface.getNetworkInterfaces()?.toList().orEmpty().flatMap { it.inetAddresses.toList() }.map { it.address }
+    } catch (_: Throwable) { emptyList() }
+
     /** Ukaz `audio.play`: poveze se na racunalnik in predvaja. Takoj vrne izid; zvok tece v ozadju. */
     fun zacni(context: Context, p: JSONObject): Daljinec.Izid {
         val vrata = p.optInt("port", 0)
         val odtis = p.optString("fp", "")
         val zeton = p.optString("token", "")
-        val naslovi = mutableListOf<String>()
-        p.optJSONArray("hosts")?.let { for (i in 0 until it.length()) it.optString(i, "").takeIf { n -> n.isNotBlank() }?.let(naslovi::add) }
-        p.optString("host", "").takeIf { it.isNotBlank() }?.let { if (it !in naslovi) naslovi.add(0, it) }
+        // Tedenski pregled 25. 11. 2026 (S3), kot TV 10. 11. (2.4): seznam naslovov je bil brez meje (vsak 4 s cakanja)
+        // in je sprejel tudi ta telefon sam. Beremo najvec nekaj vnosov; kateri veljajo, odloci LinkVarnostPravila.nasloviZvoka.
+        val surovi = ArrayList<String>()
+        p.optJSONArray("hosts")?.let { for (i in 0 until minOf(it.length(), 4 * LinkVarnostPravila.NAJVEC_NASLOVOV_ZVOKA)) surovi.add(it.optString(i, "")) }
+        val naslovi = LinkVarnostPravila.nasloviZvoka(p.optString("host", ""), surovi, lastniNaslovi())
         if (vrata !in 1..65535 || odtis.length < 32 || zeton.length < 16 || naslovi.isEmpty()) {
             return Daljinec.Izid(false, "Nepopoln ukaz za zvok", koda = "neveljavno")
         }
@@ -78,7 +85,7 @@ object ZvokSprejemnik {
         var s: SSLSocket? = null
         try {
             s = povezi(naslovi, vrata, odtis) ?: run {
-                Log.w(TAG, "Racunalnika ni bilo mogoce doseci (${naslovi.joinToString()}:$vrata)")
+                Log.w(TAG, "Racunalnika ni bilo mogoce doseci (${naslovi.size} naslovov)")   // S3: brez naslovov v dnevniku
                 return
             }
             if (moja != seja) return
@@ -87,14 +94,19 @@ object ZvokSprejemnik {
             izhod.write("SAFEER-ZVOK $zeton\n".toByteArray())
             izhod.flush()
             val vhod = s.inputStream
-            val glava = JSONObject(preberiVrstico(vhod))
+            // Tedenski pregled 25. 11. 2026 (S3), kot TV: glava mora priti v skupnem roku - prej 15 s na VSAK bajt (do 1024 bajtov).
+            val zacetek = android.os.SystemClock.elapsedRealtime()
+            s.soTimeout = LinkVarnostPravila.ROK_GLAVE_ZVOKA_MS.toInt()
+            val glava = JSONObject(preberiVrstico(vhod) {
+                LinkVarnostPravila.rokPotekel(zacetek, android.os.SystemClock.elapsedRealtime(), LinkVarnostPravila.ROK_GLAVE_ZVOKA_MS)
+            })
             val zv = glava.optJSONObject("zvok") ?: JSONObject()
             // Ko zvok tece, tisina ni napaka: racunalnik povezavo zapre sam, ko sejo konca.
             s.soTimeout = 0
             zvocnik = pripravi(zv.optInt("hz", 48000), zv.optInt("kanali", 2)) ?: return
             racunalnik = ime
             obvesti(context, "🔊 $ime")
-            Log.i(TAG, "Zvok z racunalnika $ime tece")
+            Log.i(TAG, "Zvok z racunalnika tece")
             crpaj(DataInputStream(vhod), zvocnik, moja, zv.optInt("hz", 48000), maxOf(1, zv.optInt("kanali", 2)))
         } catch (e: java.io.EOFException) {
             Log.i(TAG, "Racunalnik je zvok koncal")
@@ -122,7 +134,7 @@ object ZvokSprejemnik {
                 s.startHandshake()
                 return s
             } catch (e: Throwable) {
-                Log.i(TAG, "$n:$vrata ni dosegljiv: ${e.message}")
+                Log.i(TAG, "naslov ni dosegljiv: ${e.javaClass.simpleName}")
             }
         }
         return null
@@ -215,9 +227,11 @@ object ZvokSprejemnik {
         }
     }
 
-    private fun preberiVrstico(vhod: InputStream, najvec: Int = 1024): String {
+    /** [potekel]: skupni rok glave je mimo - branje se konca z izjemo (seja se zapre). */
+    private fun preberiVrstico(vhod: InputStream, najvec: Int = 1024, potekel: () -> Boolean = { false }): String {
         val sb = StringBuilder()
         while (sb.length < najvec) {
+            if (potekel()) throw java.net.SocketTimeoutException("glava")
             val z = vhod.read()
             if (z < 0 || z == '\n'.code) break
             sb.append(z.toChar())
