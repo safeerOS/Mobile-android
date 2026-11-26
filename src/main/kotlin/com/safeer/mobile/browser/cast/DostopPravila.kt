@@ -1,5 +1,9 @@
 package com.safeer.mobile.browser.cast
 
+// Preneseno iz brskalnika za televizor (si.safeer.tv.cast) brez sprememb v logiki:
+// gostitelj Safeer Linka mora biti enak na vseh napravah, sicer se protokol razide.
+// Ce se tu kaj spremeni, mora ista sprememba v tv-browser-2 (vir); kopijo naredi tools/link-core-sync.sh.
+
 /**
  * Dostop drugih naprav v Safeer Linku do vsebin TE naprave. Cista pravila brez Androida (tests/DostopPravilaTest.kt).
  *
@@ -92,6 +96,13 @@ object DostopPravila {
      * 25. 10. 2026), sicer zapisano.
      */
     fun veljavne(dano: Set<Zmoznost>, umaknjena: Boolean): Set<Zmoznost> = if (umaknjena) emptySet() else dano
+
+    /**
+     * Jedra naprav iz [jedra], ki so umaknjene iz kroga: njihov zapis dovoljenj in privolitve se ob umiku ZBRISEJO
+     * (pregled 10. 11. 2026, najdba A). Prej je zapis ostal in ga je naprava ob vrnitvi v krog dobila nazaj - tudi, ce
+     * jo je vrnil kdo drug kot uporabnik te naprave. Zdaj naprava po vrnitvi zacne brez dostopa; odpre ji ga uporabnik.
+     */
+    fun umaknjenaJedra(jedra: Collection<String>, umaknjena: (String) -> Boolean): Set<String> = jedra.filter { umaknjena(it) }.toSet()
 
     /**
      * Pregled veje tv-vnos (25. 10. 2026, tocka 1): vnos z miske in tipkovnice (input.*, gamepad.*) - tudi vklop Safeer
@@ -326,19 +337,13 @@ object DostopPravila {
      * Naprave, ki ob uvedbi dovoljenj obdrzijo dostop na tej napravi (jedra): tiste, ki so v krogu ze od prej kot
      * [meja] - a le, ce je bila v krogu ze prej tudi TA naprava. Naprava, dodana po meji (telefon druge osebe, nova
      * namestitev), ne podeduje nikogar: tudi ona svojih vsebin ne odpre napravam, ki jih je spoznala sele zdaj.
-     * Steje najstarejsi veljavni vnos istega kljuca (naprava ima lahko vec id-jev). [znaniPrej] (telefon): kljuci v krogu
-     * TE naprave ob prvem zagonu z dovoljenji, zapisani tu pred vsakim sporocilom; null = brez te omejitve (TV).
+     * Steje najstarejsi veljavni vnos istega kljuca (naprava ima lahko vec id-jev).
      */
-    fun podedovani(clani: List<Clan>, lastniKljuc: String?, idIzKljuca: (String) -> String, meja: Double = MEJA_PODEDOVANJA,
-                   znaniPrej: Set<String>? = null): Set<String> {
+    fun podedovani(clani: List<Clan>, lastniKljuc: String?, idIzKljuca: (String) -> String, meja: Double = MEJA_PODEDOVANJA): Set<String> {
         if (lastniKljuc.isNullOrBlank()) return emptySet()
         val najstarejsi = HashMap<String, Double>()
         for (c in clani) {
             if (c.kljuc.isBlank()) continue
-            // Neodvisni pregled 4. 11. 2026 09:10: »dodano« zapise naprava, ki je clana dodala, in pride v krogu od
-            // drugod - naprava, ki pride v krog po uvedbi, bi z izmisljenim starim casom podedovala ves dostop. Steje
-            // samo kljuc, ki ga je TA naprava imela v svojem krogu, preden je prejela karkoli od Linka ([znaniPrej]).
-            if (znaniPrej != null && c.kljuc !in znaniPrej) continue
             val prej = najstarejsi[c.kljuc]
             if (prej == null || c.dodano < prej) najstarejsi[c.kljuc] = c.dodano
         }
