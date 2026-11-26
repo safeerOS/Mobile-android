@@ -24,6 +24,34 @@ object JsonLahki {
     /** Globlje od tega ne gremo; branje ne sme biti nacin, da nekdo porabi sklad. */
     const val NAJVECJA_GLOBINA = 12
 
+    /**
+     * Ali besedila NE smemo dati razclenjevalniku org.json, ker bi bilo lahko gnezdeno globlje od [najvec]. org.json
+     * gnezdenja ne omejuje: z zelo globokim JSON-om porabi sklad niti (StackOverflowError ni Exception - drugi neodvisni
+     * pregled, 7. 10. 2026). Sporocila Safeer Linka so gnezdena nekaj ravni.
+     *
+     * Globino potrdi STROGI bralec ([strogObjekt]). org.json je namrec popustljiv: sprejme gole besede, enojne
+     * narekovaje in komentarje, zato se z zapisom, ki ni strogi JSON, stetje oklepajev »zunaj nizov« da pretentati
+     * (`{a":[[[[...` - golo besedo `a"` org.json prebere kot kljuc; cetrti neodvisni pregled, 7. 10. 2026). Besedilo, ki
+     * ni strogi objekt JSON, sme zato naprej samo, ce v njem sploh ni vec kot [najvec] oklepajev - potem ne more biti
+     * gnezdeno globlje, kakorkoli ga kdo bere.
+     */
+    fun pregloboko(vir: String, najvec: Int = 64): Boolean {
+        if (strogObjekt(vir, najvec)) return false
+        var oklepajev = 0
+        for (c in vir) if (c == '{' || c == '[') { if (++oklepajev > najvec) return true }
+        return false
+    }
+
+    /**
+     * Ali je [vir] en sam objekt strogega JSON, gnezden najvec [najvecGlobina] ravni (objekt na vrhu je prva raven).
+     * Samo preveri - vrednosti ne odkodira in ne hrani.
+     */
+    fun strogObjekt(vir: String, najvecGlobina: Int = NAJVECJA_GLOBINA): Boolean = try {
+        Bralec(vir, najvecGlobina, samoPreverba = true).jeEnObjekt()
+    } catch (e: Exception) {
+        false
+    }
+
     enum class Vrsta { NIZ, STEVILO, LOGICNO, NIC, OBJEKT, SEZNAM }
 
     /** Prebere en sam objekt JSON. Vrne null, ce vir ni pravilen objekt ali ce kaj ostane za njim. */
@@ -37,6 +65,23 @@ object JsonLahki {
         } catch (e: Exception) {
             null
         }
+    }
+
+    /**
+     * Elementi seznama JSON kot izvirno besedilo (vgnezdeno preverjeno, ne razgrnjeno); null, ce vir ni pravilen seznam.
+     * Brez meje stevila elementov (seznam naprav, SeznamSprememb) - mejo postavi velikost sporocila.
+     */
+    fun elementi(vir: String): List<String>? = try {
+        Bralec(vir).elementi()
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Vrednost niza iz izvirnega besedila JSON (z narekovaji), npr. elementa seznama; null, ce to ni en niz. */
+    fun niz(surovo: String): String? = try {
+        Bralec(surovo).samoNiz()
+    } catch (e: Exception) {
+        null
     }
 
     /** Polje objekta: vrsta, obmocje v izvirnem besedilu in, pri nizih, ze odkodirana vrednost. */
@@ -107,9 +152,23 @@ object JsonLahki {
 
     // ------------------------------------------------------------------ branje
 
-    internal class Bralec(private val vir: String) {
+    internal class Bralec(
+        private val vir: String,
+        /** Globlje od tega bralec ne gre (branje ne sme biti nacin, da nekdo porabi sklad). */
+        private val najvecGlobina: Int = NAJVECJA_GLOBINA,
+        /** Samo preverba oblike: nizov ne odkodira in ne hrani (glej strogObjekt). */
+        private val samoPreverba: Boolean = false,
+    ) {
         private var i = 0
         private var zadnjiNiz: String? = null
+
+        /** Ali je ves vir en sam objekt (z dovoljenimi presledki pred njim in za njim). */
+        fun jeEnObjekt(): Boolean {
+            preskociPresledke()
+            if (!preskociObjekt(1)) return false
+            preskociPresledke()
+            return konec()
+        }
 
         fun konec(): Boolean = i >= vir.length
 
@@ -123,7 +182,7 @@ object JsonLahki {
         }
 
         fun objekt(globina: Int): Pogled? {
-            if (globina > NAJVECJA_GLOBINA) return null
+            if (globina > najvecGlobina) return null
             if (i >= vir.length || vir[i] != '{') return null
             i++
             val polja = LinkedHashMap<String, Polje>()
@@ -173,7 +232,7 @@ object JsonLahki {
         }
 
         private fun preskociObjekt(globina: Int): Boolean {
-            if (globina > NAJVECJA_GLOBINA) return false
+            if (globina > najvecGlobina) return false
             if (i >= vir.length || vir[i] != '{') return false
             i++
             preskociPresledke()
@@ -203,7 +262,7 @@ object JsonLahki {
         }
 
         private fun preskociSeznam(globina: Int): Boolean {
-            if (globina > NAJVECJA_GLOBINA) return false
+            if (globina > najvecGlobina) return false
             if (i >= vir.length || vir[i] != '[') return false
             i++
             preskociPresledke()
@@ -254,10 +313,100 @@ object JsonLahki {
             }
         }
 
+        /** Seznam na vrhu vira: izvirno besedilo vsakega elementa; null, ce vir ni en pravilen seznam. */
+        fun elementi(): List<String>? {
+            preskociPresledke()
+            if (i >= vir.length || vir[i] != '[') return null
+            i++
+            val izpis = ArrayList<String>()
+            preskociPresledke()
+            if (i < vir.length && vir[i] == ']') {
+                i++
+                preskociPresledke()
+                return if (konec()) izpis else null
+            }
+            while (true) {
+                preskociPresledke()
+                val zacetek = i
+                if (vrednost(1) == null) return null
+                izpis.add(vir.substring(zacetek, i))
+                preskociPresledke()
+                if (i >= vir.length) return null
+                when (vir[i]) {
+                    ',' -> i++
+                    ']' -> {
+                        i++
+                        preskociPresledke()
+                        return if (konec()) izpis else null
+                    }
+                    else -> return null
+                }
+            }
+        }
+
+        /** Ves vir je en sam niz JSON. */
+        fun samoNiz(): String? {
+            preskociPresledke()
+            val s = niz() ?: return null
+            preskociPresledke()
+            return if (konec()) s else null
+        }
+
+        /** Preskoci niz, ne da bi ga odkodiral; ista pravila kot [niz] (strogi JSON). */
+        private fun preskociNiz(): Boolean {
+            if (i >= vir.length || vir[i] != '"') return false
+            i++
+            val n = vir.length
+            while (i < n) {
+                val c = vir[i]
+                when {
+                    c == '"' -> { i++; return true }
+                    c == '\\' -> {
+                        i++
+                        if (i >= n) return false
+                        when (vir[i]) {
+                            '"', '\\', '/', 'b', 'f', 'n', 'r', 't' -> i++
+                            'u' -> {
+                                if (i + 4 >= n) return false
+                                for (k in 1..4) {
+                                    val h = vir[i + k]
+                                    if (!(h in '0'..'9' || h in 'a'..'f' || h in 'A'..'F')) return false
+                                }
+                                i += 5
+                            }
+                            else -> return false
+                        }
+                    }
+                    c.code < 0x20 -> return false       // neubezani nadzorni znaki niso dovoljeni
+                    else -> i++
+                }
+            }
+            return false
+        }
+
         private fun niz(): String? {
+            if (samoPreverba) return if (preskociNiz()) "" else null
             if (i >= vir.length || vir[i] != '"') return null
             i++
-            val izpis = StringBuilder()
+            // Hitra pot: niz brez ubeznih znakov (velika vecina, tudi 32 KiB kosi tokov v base64) je kar izsek
+            // vira. Prej je sel vsak znak posebej skozi StringBuilder - pri tokovih Internet Gatewaya je to
+            // zasedlo celo jedro telefona.
+            val zacetek = i
+            var j = i
+            val n = vir.length
+            while (j < n) {
+                val c = vir[j]
+                if (c == '"') {
+                    i = j + 1
+                    return vir.substring(zacetek, j)
+                }
+                if (c == '\\' || c.code < 0x20) break
+                j++
+            }
+            if (j >= n) return null
+            val izpis = StringBuilder(j - zacetek + 32)
+            izpis.append(vir, zacetek, j)
+            i = j
             while (i < vir.length) {
                 val c = vir[i]
                 when {
@@ -324,18 +473,35 @@ object JsonLahki {
 
     /** Ubezi niz za JSON. Nadzorni znaki gredo v \\u obliko, da izpis ostane veljaven. */
     fun ubezi(besedilo: String): String {
-        val izpis = StringBuilder(besedilo.length + 8)
-        for (c in besedilo) {
-            when {
-                c == '"' -> izpis.append("\\\"")
-                c == '\\' -> izpis.append("\\\\")
-                c == '\n' -> izpis.append("\\n")
-                c == '\r' -> izpis.append("\\r")
-                c == '\t' -> izpis.append("\\t")
-                c.code < 0x20 -> izpis.append(String.format("\\u%04x", c.code))
-                else -> izpis.append(c)
-            }
+        val n = besedilo.length
+        var i = 0
+        // Hitra pot: nic za ubezati (identifikatorji, base64) - vrnemo isti niz, brez kopije.
+        while (i < n) {
+            val c = besedilo[i]
+            if (c == '"' || c == '\\' || c.code < 0x20) break
+            i++
         }
+        if (i == n) return besedilo
+        val izpis = StringBuilder(n + 64)
+        var cisto = 0          // zacetek odseka brez posebnih znakov; prepise se v enem kosu
+        while (i < n) {
+            val c = besedilo[i]
+            val zamenjava: String? = when {
+                c == '"' -> "\\\""
+                c == '\\' -> "\\\\"
+                c == '\n' -> "\\n"
+                c == '\r' -> "\\r"
+                c == '\t' -> "\\t"
+                c.code < 0x20 -> String.format("\\u%04x", c.code)
+                else -> null
+            }
+            if (zamenjava != null) {
+                izpis.append(besedilo, cisto, i).append(zamenjava)
+                cisto = i + 1
+            }
+            i++
+        }
+        izpis.append(besedilo, cisto, n)
         return izpis.toString()
     }
 

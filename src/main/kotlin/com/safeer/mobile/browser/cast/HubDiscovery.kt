@@ -61,7 +61,7 @@ object HubDiscovery {
                     }
 
                     override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                        val koda = response.code
+                        val koda = HubPreusmeritve.kodaPreverbe(response.code)
                         response.close()
                         odgovor(koda)
                     }
@@ -113,14 +113,16 @@ object HubDiscovery {
             .getString("control_token", null).isNullOrBlank()
 
     /** Hub, ki se oglasa v omrezju, kot ga vidi izvolitev: naslov, odtis, id in prioriteta iz oglasa. */
-    data class NajdeniHub(val naslov: String, val odtis: String, val id: String, val prioriteta: Int, val ime: String)
+    data class NajdeniHub(val naslov: String, val odtis: String, val id: String, val prioriteta: Int, val ime: String,
+                          /** Link Mesh: Hub zna sosednje povezave (oglas `mesh=mesh1`). */
+                          val mesh: String = "")
 
     /**
      * Zbere VSE hube, ki se oglasajo in so zivi (mDNS, [timeoutMs]), brez spreminjanja nastavitev.
      * Za izvolitev huba: klicatelj kandidate prefiltrira po krogu zaupanja in izbere najboljsega.
      * Klic na glavni niti, natanko enkrat.
      */
-    fun poisciVse(context: Context, timeoutMs: Long = 2500L, naprej: (List<NajdeniHub>) -> Unit) {
+    fun poisciVse(context: Context, timeoutMs: Long = 4000L, naprej: (List<NajdeniHub>) -> Unit) {
         val app = context.applicationContext
         val glavna = Handler(Looper.getMainLooper())
         val nsd = app.getSystemService(Context.NSD_SERVICE) as? NsdManager
@@ -132,6 +134,12 @@ object HubDiscovery {
                 ?.createMulticastLock("safeer-hub-izvolitev")?.apply { setReferenceCounted(false); acquire() }
         } catch (_: Exception) { null }
         var listener: NsdManager.DiscoveryListener? = null
+        // Razresujemo enega za drugim: Android pred 14 drugi hkratni resolveService zavrne
+        // (FAILURE_ALREADY_ACTIVE) - televizor je razresil svoj oglas, racunalnikovega pa izgubil in
+        // pri izvolitvi ni videl nikogar (22. 9. 2026: "drugih v krogu: 0" ob hubu racunalnika).
+        val cakalna = java.util.ArrayDeque<NsdServiceInfo>()
+        var razresujem = false
+        lateinit var razresi: () -> Unit
         fun zakljuci() {
             if (!koncano.compareAndSet(false, true)) return
             try { listener?.let { nsd.stopServiceDiscovery(it) } } catch (_: Exception) {}
@@ -140,9 +148,14 @@ object HubDiscovery {
             glavna.post { naprej(kopija) }
         }
         fun razresevalec(): NsdManager.ResolveListener = object : NsdManager.ResolveListener {
-            override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {}
+            override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
+                synchronized(cakalna) { razresujem = false }
+                razresi()
+            }
             override fun onServiceResolved(info: NsdServiceInfo) {
-                val gostitelj = info.host?.hostAddress ?: return
+                synchronized(cakalna) { razresujem = false }
+                razresi()
+                val gostitelj = naslovStoritve(info)?.hostAddress ?: return
                 val l = info.attributes ?: emptyMap<String, ByteArray>()
                 if (l["tls"]?.toString(Charsets.UTF_8) != "1") return
                 val wsPot = l["ws"]?.toString(Charsets.UTF_8) ?: "/cast/ws"
@@ -152,6 +165,7 @@ object HubDiscovery {
                     id = l[IzvolitevHuba.TXT_ID]?.toString(Charsets.UTF_8).orEmpty(),
                     prioriteta = IzvolitevHuba.prioritetaIzOglasa(l[IzvolitevHuba.TXT_PRIORITETA]?.toString(Charsets.UTF_8)),
                     ime = l["name"]?.toString(Charsets.UTF_8).orEmpty(),
+                    mesh = l[HubUsmerjevalnik.TXT_MESH]?.toString(Charsets.UTF_8).orEmpty(),
                 )
                 // Zapis v mDNS prezivi hub, ki ga ni vec: steje samo ziv hub.
                 preveriHub("https://$gostitelj:${info.port}", null) { ziv -> if (ziv && !koncano.get()) najdeni.add(hub) }
@@ -161,12 +175,26 @@ object HubDiscovery {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onServiceFound(info: NsdServiceInfo) {
                 if (koncano.get()) return
-                try { @Suppress("DEPRECATION") nsd.resolveService(info, razresevalec()) } catch (_: Exception) {}
+                synchronized(cakalna) { cakalna.addLast(info) }
+                razresi()
             }
             override fun onServiceLost(info: NsdServiceInfo) {}
             override fun onDiscoveryStopped(serviceType: String) {}
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) { zakljuci() }
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+        }
+        razresi = {
+            while (true) {
+                val naslednji = synchronized(cakalna) {
+                    if (razresujem || koncano.get()) null else cakalna.pollFirst()?.also { razresujem = true }
+                } ?: break
+                try {
+                    @Suppress("DEPRECATION") nsd.resolveService(naslednji, razresevalec())
+                    break
+                } catch (_: Exception) {
+                    synchronized(cakalna) { razresujem = false }
+                }
+            }
         }
         try { nsd.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener) } catch (_: Exception) { zakljuci(); return }
         glavna.postDelayed({ zakljuci() }, timeoutMs)
@@ -247,7 +275,7 @@ object HubDiscovery {
             }
 
             override fun onServiceResolved(info: NsdServiceInfo) {
-                val gostitelj = info.host?.hostAddress
+                val gostitelj = naslovStoritve(info)?.hostAddress
                 if (gostitelj.isNullOrBlank()) {
                     Log.w(TAG, "Razrešen Hub brez naslova.")
                     return
@@ -347,3 +375,8 @@ object HubDiscovery {
         }, timeoutMs)
     }
 }
+
+/** Prvi naslov razresene storitve: od Androida 14 (API 34) hostAddresses, na Androidu 9-13 dosedanji host. */
+internal fun naslovStoritve(info: android.net.nsd.NsdServiceInfo): java.net.InetAddress? =
+    if (android.os.Build.VERSION.SDK_INT >= 34) info.hostAddresses.firstOrNull()
+    else @Suppress("DEPRECATION") info.host

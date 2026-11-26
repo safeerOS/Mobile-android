@@ -206,6 +206,8 @@ object HubTls {
         if (povezava !is HttpsURLConnection) throw java.io.IOException("Safeer Link: Hub brez TLS - posodobi Safeer na gostitelju")
         val odtis = pripetiOdtis(context)
             ?: throw java.io.IOException("Safeer Link: naprava s tem Hubom se ni seznanjena (ni odtisa potrdila)")
+        // Zeton je v poti ali glavi: preusmeritev bi ga odnesla drugam (S6, 5. 11. 2026); 3xx je za klicatelja napaka.
+        povezava.instanceFollowRedirects = false
         pripravi(povezava, odtis)
     }
 
@@ -216,9 +218,31 @@ object HubTls {
      */
     fun okhttp(graditelj: okhttp3.OkHttpClient.Builder, pripeti: String?, pripetiKljuc: String? = null): Pair<okhttp3.OkHttpClient.Builder, Zaupnik> {
         val (tovarna, z) = odjemalec(pripeti, pripetiKljuc)
+        // Zeton Huba ne sme slediti preusmeritvi na drug naslov (S6, 5. 11. 2026).
+        HubPreusmeritve.brez(graditelj)
         graditelj.sslSocketFactory(tovarna, z)
         graditelj.hostnameVerifier { _, _ -> true }
+        graditelj.socketFactory(BrezZamika)
         return graditelj to z
+    }
+
+    /**
+     * Vticnice Linka brez Naglovega zbiranja. Sporocila so kratka in vsako naj gre takoj: potrditev toka
+     * ali ukaz daljinca sicer caka na potrditev prejsnjega paketa (do 40 ms ob zakasnjenem ACK).
+     */
+    private object BrezZamika : javax.net.SocketFactory() {
+        private val osnovna: javax.net.SocketFactory = getDefault()
+        private fun pripravi(s: java.net.Socket): java.net.Socket {
+            try { s.tcpNoDelay = true } catch (_: Exception) { }
+            return s
+        }
+        override fun createSocket(): java.net.Socket = pripravi(osnovna.createSocket())
+        override fun createSocket(host: String?, port: Int): java.net.Socket = pripravi(osnovna.createSocket(host, port))
+        override fun createSocket(host: String?, port: Int, localHost: java.net.InetAddress?, localPort: Int): java.net.Socket =
+            pripravi(osnovna.createSocket(host, port, localHost, localPort))
+        override fun createSocket(host: java.net.InetAddress?, port: Int): java.net.Socket = pripravi(osnovna.createSocket(host, port))
+        override fun createSocket(address: java.net.InetAddress?, port: Int, localAddress: java.net.InetAddress?, localPort: Int): java.net.Socket =
+            pripravi(osnovna.createSocket(address, port, localAddress, localPort))
     }
 
     fun pripetiOdtis(context: Context): String? =
@@ -262,15 +286,26 @@ object HubTls {
                 .substringBefore("/cast/ws").substringBefore("/link/ws").substringBefore("/safeer/ws").trimEnd('/')
             val potrdilo = napaka.certificate ?: return false
             val videni = odtis(potrdilo) ?: return false
-            jeNaslovHuba(napaka.url, hubHttp) &&
+            // Global Link (lastnik 28. 10. 2026): zdoma pride ista stran Huba prek krajevnih vrat releja (127.0.0.1) - rele
+            // prenasa nespremenjen TLS Huba, zato velja isti pripeti odtis; drugih naslovov 127.0.0.1 ne sprejmemo.
+            (jeNaslovHuba(napaka.url, hubHttp) || jeReleHuba(napaka.url)) &&
                 MessageDigest.isEqual(videni.toByteArray(), pripeti.toByteArray())
         } catch (e: Throwable) {
             false
         }
     }
 
-    /** Ali je naslov (https://gostitelj:vrata/...) naslov Huba, ki mu zaupamo (pravila v HubNaslov, preizkus brez Androida). */
-    fun jeNaslovHuba(url: String, hubHttp: String): Boolean = HubNaslov.jeNaslovHuba(url, hubHttp)
+    /** Naslov je na krajevnih vratih odprtega releja Global Link (127.0.0.1:vrata), ne katerih koli krajevnih vrat. */
+    private fun jeReleHuba(url: String): Boolean = try {
+        val u = java.net.URL(url)
+        u.protocol == "https" && si.safeer.tv.link.GlobalLink.jeRele(u.host, u.port)
+    } catch (_: Exception) { false }
+
+    /**
+     * Ali je naslov (https://gostitelj:vrata/...) naslov Huba, ki mu zaupamo. Neodvisni pregled 4. 11. 2026: privzeta vrata
+     * (zapisana ali ne) in velike crke gostitelja ne smejo vplivati - pravilo in preizkus sta v SpletVarnostPravila.istiIzvor.
+     */
+    fun jeNaslovHuba(url: String, hubHttp: String): Boolean = si.safeer.tv.SpletVarnostPravila.istiIzvor(url, hubHttp)
 
     fun sha256Hex(b: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it.toInt() and 0xff) }
