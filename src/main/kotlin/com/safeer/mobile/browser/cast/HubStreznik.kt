@@ -84,6 +84,9 @@ class HubStreznik(
     /** Koliko bajtov trenutno zadrzujejo vse povezave skupaj (sestavljanje sporocil). */
     private val skupajZadrzano = java.util.concurrent.atomic.AtomicLong(0)
 
+    /** Za preizkuse: koliko bajtov zdaj zadrzujejo vse povezave (vkljucno z rezerviranimi, se neprebranimi okvirji). */
+    internal fun zadrzanoSkupaj(): Long = skupajZadrzano.get()
+
     /**
      * Nepreverjene vticnice: od sprejema do prebrane zahteve (pri WebSocket do veljavne vstopnice, pri toku do predaje
      * HubTokovi, ki preveri svoj kljuc), v vrstnem redu sprejema. Samo zanje veljata fiksni meji
@@ -613,7 +616,7 @@ class HubStreznik(
          * pomnilnik nad rezervo (ViriNaprave) - prej je bila to meja 1 MiB za vse clane skupaj
          * (pet clanov z velikim sporocilom hkrati in sesti je dobil 1013).
          */
-        private var zadrzano = 0L
+        private val zadrzano = java.util.concurrent.atomic.AtomicLong(0)
 
         private fun zadrziBajte(n: Int): Boolean {
             val skupaj = skupajZadrzano.addAndGet(n.toLong())
@@ -625,15 +628,44 @@ class HubStreznik(
                     return false
                 }
             }
-            zadrzano += n
+            return potrdiZadrzek(n)
+        }
+
+        /**
+         * Rezervacija okvirja nad [VELIK_OKVIR_B]: vedno tudi meritev pomnilnika (kot prej, ne glede na skupni prag) in to za SKUPNO
+         * zavezo, vkljucno z ze rezerviranimi, a se neprebranimi okvirji drugih povezav (CodeRabbit st9): sicer bi dve povezavi z
+         * 900 KiB vsaka vsaka posebej presli preverbo, skupaj pa presegli pomnilnik.
+         */
+        private fun rezervirajVelikOkvir(n: Int): Boolean {
+            val skupaj = skupajZadrzano.addAndGet(n.toLong())
+            val razlog = ViriNaprave.preveri(0, skupaj)
+            if (razlog.isNotEmpty()) {
+                skupajZadrzano.addAndGet(-n.toLong())
+                ViriNaprave.zabelezi(razlog, "sporocilo")
+                return false
+            }
+            return potrdiZadrzek(n)
+        }
+
+        /**
+         * Zavezo vpise povezavi; ce je zapiranje tekmovalo in je povezava ze zaprta, jo takoj sprosti (CodeRabbit Mobile st2):
+         * getAndSet v [sprostiZadrzek] jamci, da zavezo sprosti natanko ena stran (zapri ali ta klic), tudi ob istocasnosti.
+         */
+        private fun potrdiZadrzek(n: Int): Boolean {
+            zadrzano.addAndGet(n.toLong())
+            if (!odprta.get()) {
+                sprostiZadrzek()
+                return false
+            }
             return true
         }
 
+        /** Za preizkuse: rezervacija velikega okvirja (kot v zanki branja). */
+        internal fun rezervirajZaPreizkus(n: Int): Boolean = rezervirajVelikOkvir(n)
+
         private fun sprostiZadrzek() {
-            if (zadrzano > 0) {
-                skupajZadrzano.addAndGet(-zadrzano)
-                zadrzano = 0
-            }
+            val n = zadrzano.getAndSet(0)
+            if (n > 0) skupajZadrzano.addAndGet(-n)
         }
 
         /** Kaj narediti s prejetim sporocilom; nastavi usmerjevalnik. */
@@ -873,6 +905,21 @@ class HubStreznik(
                     zapri(1009, "sporočilo je preveliko")
                     break
                 }
+                // Veliki okvir se REZERVIRA (ne le preveri) takoj po glavi, PRED branjem maske in polja: sicer bi vec povezav
+                // hkrati z napovedanimi velikimi okvirji slo mimo preverbe, polja pa bi se alocirala sele pozneje
+                // (CodeRabbit Mobile st1). Rezervacijo sprosti konec sporocila ali zapri().
+                var rezervirano = false
+                if (dolzina > VELIK_OKVIR_B) {
+                    if (opkoda != OPKODA_BESEDILO && opkoda != OPKODA_DVOJISKO && opkoda != OPKODA_NADALJEVANJE) {
+                        zapri(1002, "nadzorni okvir je predolg")
+                        break
+                    }
+                    if (!rezervirajVelikOkvir(dolzina.toInt())) {
+                        zapri(1013, "naprava naj poskusi znova")
+                        break
+                    }
+                    rezervirano = true
+                }
 
                 val maska = ByteArray(4)
                 if (!preberiTocno(maska)) break
@@ -898,7 +945,7 @@ class HubStreznik(
                             zapri(1009, "sporočilo je preveliko")
                             return
                         }
-                        if (!zadrziBajte(podatki.size)) {
+                        if (!rezervirano && !zadrziBajte(podatki.size)) {
                             zapri(1013, "naprava naj poskusi znova")
                             return
                         }
@@ -913,7 +960,7 @@ class HubStreznik(
                                 try {
                                     naSporocilo?.invoke(besedilo)
                                 } catch (e: Exception) {
-                                    Log.w(OZNAKA, "Obdelava sporočila ni uspela: ${e.message}")
+                                    Log.w(OZNAKA, "Obdelava sporočila ni uspela: ${e.javaClass.simpleName}")   // brez e.message: JSONException nosi del vhoda (zapiski, kljuci)
                                 }
                             }
                             if (zbrano.size() > 0) zbrano = ByteArrayOutputStream()
@@ -993,7 +1040,14 @@ class HubStreznik(
          * procesor dlje - 10 s je rezerva, da izrinjamo samo tihe, ne clanov v cakanju.
          */
         const val ROK_TIHE_MS = 10_000L
-        private const val NAJVECJE_SPOROCILO = 256L * 1024
+        /**
+         * Najvecje sporocilo clana (en okvir ali sestavljeno). Do 19. 11. 2026 256 KB: kategorija sinhronizacije (zapiski
+         * Line) do 1 MiB (HubUsmerjevalnik.NAJVECJA_KATEGORIJA) bi bila zavrnjena z 1009, ceprav jo je usmerjevalnik pripravljen
+         * hraniti. Rezerva 128 KB za ovojnico (id, tip, kategorija, cas). Preizkus HubUsmerjevalnik/UsmerjevalnikTest drzi meje skladne.
+         */
+        const val NAJVECJE_SPOROCILO = 1024L * 1024 + 128L * 1024
+        /** Okvir do te velikosti se bere kot prej; vecji se najprej preveri proti pomnilniku naprave (pred rezervacijo polja). */
+        private const val VELIK_OKVIR_B = 256L * 1024
         /** Do toliko skupaj zadrzanih bajtov (sestavljanje sporocil vseh povezav) brez meritve; nad tem odloca pomnilnik. */
         private const val SKUPNI_ZADRZEK_BREZ_MERITVE = 1L * 1024 * 1024
         /** Premor sprejemanja po napaki accept (npr. EMFILE), da zanka ne vrti procesorja. */
@@ -1021,7 +1075,12 @@ class HubStreznik(
          * lahko takoj vrne z novo. Datoteke in zaslon ne gredo skozi vrsto (svoje povezave).
          */
         private const val NAJVEC_V_VRSTI = 64
-        private const val NAJVEC_BAJTOV_V_VRSTI = 512L * 1024
+        /**
+         * Do 19. 11. 2026 512 KB: ena kategorija zapiskov (do ~1 MiB) bi zapolnila vrsto in povezavo prejemnika zaprla z
+         * 1011 »naprava ne bere«. Zdaj gre vanjo eno najvecje sporocilo in se 512 KB navadnih; stevilo sporocil (NAJVEC_V_VRSTI)
+         * in zapiranje pocasnih ostaneta.
+         */
+        const val NAJVEC_BAJTOV_V_VRSTI = NAJVECJE_SPOROCILO + 512L * 1024
         /** Koliko cakamo, da pisalna nit poslje zakljucni okvir, preden vticnico zapremo. */
         private const val ZAPIRALNI_ROK_MS = 300L
     }
