@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm *)",
+      "Bash(rmdir *)",
+      "Bash(unlink *)",
+      "Bash(git clean *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(adb reboot*)",
+      "Bash(adb * reboot*)",
+      "Bash(adb * factory-reset*)",
+      "Bash(adb * erase*)",
+      "Bash(fastboot *)",
+      "Read(./.env*)",
+      "Read(./keystore/**)",
+      "Read(./**/*.jks)",
+      "Read(./**/*.keystore)"
+    ]
+  }
+}
