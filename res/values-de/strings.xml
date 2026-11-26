@@ -37,6 +37,8 @@
     <string name="ssl_warning_title">Sicherheitswarnung (SSL)</string>
     <string name="ssl_warning_msg">Eine sichere Verbindung zu %1$s ist nicht möglich, weil das Sicherheitszertifikat ungültig oder abgelaufen ist.\n\nDer Zugriff wurde zum Schutz Ihrer Daten abgebrochen.</string>
     <string name="ssl_this_site">Diese Website</string>
+    <string name="ssl_compromised_ca_title">Sicherheitswarnung: kompromittierte Zertifizierungsstelle (eMudhra)</string>
+    <string name="ssl_compromised_ca_msg">Das Zertifikat dieser Website wurde von einer Zertifizierungsstelle ausgestellt, die wegen kompromittierter Schlüssel widerrufen wurde. Die Website wird deshalb nicht geöffnet.</string>
     <string name="toast_prev_tab">◀ Vorheriger Tab</string>
     <string name="toast_next_tab">Nächster Tab ▶</string>
     <string name="toast_downloading">📥 Wird heruntergeladen: %1$s</string>
