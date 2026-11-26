@@ -14,7 +14,9 @@ command -v "$KOTLINC" >/dev/null 2>&1 || KOTLINC="kotlinc"
 # Preizkusi tecejo tudi v CI (tests/run_tests.sh, tedenski pregled 4. 11. 2026).
 
 # HubTokovi uporablja org.json (na Androidu vgrajen); na JVM ga dodamo iz predpomnilnika Gradla.
-JSON_JAR="${JSON_JAR:-$(ls "$HOME"/.gradle/caches/modules-2/files-2.1/org.json/json/*/*/json-*.jar 2>/dev/null | grep -v sources | head -1)}"
+# Najprej jar v tests/lib/ (vsota v tests/lib/SHA256SUMS; v APK ne gre), sicer predpomnilnik Gradla.
+JSON_JAR="${JSON_JAR:-$PROJECT_DIR/tests/lib/json-20240303.jar}"
+[ -f "$JSON_JAR" ] || JSON_JAR="$(ls "$HOME"/.gradle/caches/modules-2/files-2.1/org.json/json/*/*/json-*.jar 2>/dev/null | grep -v sources | head -1 || true)"
 [ -n "$JSON_JAR" ] || { echo "Manjka org.json (JSON_JAR)" >&2; exit 2; }
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
