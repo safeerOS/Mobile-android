@@ -32,8 +32,9 @@ class MobileFileProvider : ContentProvider() {
         selection: String?,
         selectionArgs: Array<out String>?,
         sortOrder: String?
-    ): Cursor {
-        val file = getFileForUri(uri)
+    ): Cursor? {
+        // Pot zunaj podrocij prenosov: brez vrstice (ne izjema v klicatelja).
+        val file = try { getFileForUri(uri) } catch (_: FileNotFoundException) { return null }
         val proj = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
         val cursor = MatrixCursor(proj, 1)
         val row = cursor.newRow()
@@ -48,7 +49,7 @@ class MobileFileProvider : ContentProvider() {
     }
 
     override fun getType(uri: Uri): String? {
-        val file = getFileForUri(uri)
+        val file = try { getFileForUri(uri) } catch (_: FileNotFoundException) { return null }
         val ext = file.extension
         return if (ext.isNotEmpty()) {
             MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase()) ?: "application/octet-stream"
@@ -58,58 +59,35 @@ class MobileFileProvider : ContentProvider() {
     }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
-        val file = getFileForUri(uri)
-        val fileMode = when (mode) {
-            "r" -> ParcelFileDescriptor.MODE_READ_ONLY
-            "w", "wa" -> ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_CREATE
-            "rw" -> ParcelFileDescriptor.MODE_READ_WRITE or ParcelFileDescriptor.MODE_CREATE
-            else -> ParcelFileDescriptor.MODE_READ_ONLY
-        }
-        return ParcelFileDescriptor.open(file, fileMode)
+        // Samo branje (tedenski pregled 4. 11. 2026): prej sta w/rw ustvarila ali prepisala datoteko v mapi aplikacije.
+        if (!PonudnikPravila.samoBranje(mode)) throw SecurityException("Ponudnik je samo za branje")
+        return ParcelFileDescriptor.open(getFileForUri(uri), ParcelFileDescriptor.MODE_READ_ONLY)
     }
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? = null
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
 
-    private fun safeChild(parent: File?, child: String): File {
-        if (parent == null) throw FileNotFoundException("Korenska mapa shrambe ni na voljo")
-        val cleanChild = child.removePrefix("/").replace('\\', '/')
-        val base = parent.canonicalFile
-        val target = File(base, cleanChild).canonicalFile
-        val basePath = base.path
-        val targetPath = target.path
-        if (!targetPath.startsWith(basePath + File.separator) && targetPath != basePath) {
-            throw FileNotFoundException("Zavrnjen neveljaven poskus dostopa ali pot: $child")
-        }
-        return target
-    }
-
+    /**
+     * Datoteka za URI samo v podrocjih prenosov (PonudnikPravila.razcleni), po kanonicni poti znotraj korena podrocja,
+     * obstojeca navadna datoteka. Nic se ne ustvari (prej mkdirs za vsako zahtevano pot).
+     */
     private fun getFileForUri(uri: Uri): File {
-        val path = uri.path ?: throw FileNotFoundException("Prazen URI")
         val ctx = context ?: throw FileNotFoundException("Context ni na voljo")
-        
-        val file = if (path.startsWith("/external_files/")) {
-            val base = ctx.getExternalFilesDir(null) ?: ctx.filesDir
-            safeChild(base, path.removePrefix("/external_files/"))
-        } else if (path.startsWith("/javno/")) {
-            // Javna mapa (Prenosi, Dokumenti ...): samo datoteke, ki jih je ta aplikacija sama zapisala
-            // (prenosi brskalnika, prejete prek Safeer Linka) - za odpiranje in deljenje iz seznama prenosov.
-            val ostanek = path.removePrefix("/javno/")
-            val mapa = ostanek.substringBefore('/')
-            if (mapa !in PrenosiUi.JAVNE_MAPE || !ostanek.contains('/')) throw FileNotFoundException("Neznana javna mapa: $mapa")
-            val f = safeChild(android.os.Environment.getExternalStoragePublicDirectory(mapa), ostanek.substringAfter('/'))
-            if (!f.isFile) throw FileNotFoundException("Datoteke ni: $f")
-            return f
-        } else if (path.startsWith("/cache_files/")) {
-            safeChild(ctx.cacheDir, path.removePrefix("/cache_files/"))
-        } else {
-            safeChild(ctx.filesDir, path)
+        val (podrocje, rel) = PonudnikPravila.razcleni(uri.path) ?: throw FileNotFoundException("Pot ni dovoljena")
+        val f = when (podrocje) {
+            PonudnikPravila.Podrocje.JAVNO -> {
+                val mapa = rel.substringBefore('/')
+                if (mapa !in PrenosiUi.JAVNE_MAPE || !rel.contains('/')) throw FileNotFoundException("Neznana javna mapa")
+                PonudnikPravila.datoteka(android.os.Environment.getExternalStoragePublicDirectory(mapa), rel.substringAfter('/'))
+            }
+            PonudnikPravila.Podrocje.ZUNANJI_PRENOSI ->
+                PonudnikPravila.datoteka(ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), rel)
+            PonudnikPravila.Podrocje.NOTRANJI_PRENOSI ->
+                PonudnikPravila.datoteka(File(ctx.filesDir, PonudnikPravila.NOTRANJA_PODMAPA), rel)
+            PonudnikPravila.Podrocje.PREDPOMNILNIK -> PonudnikPravila.datoteka(ctx.cacheDir, rel)
         }
-        
-        if (!file.exists()) {
-            file.parentFile?.mkdirs()
-        }
-        return file
+        if (f == null || !f.isFile) throw FileNotFoundException("Datoteke ni")
+        return f
     }
 }

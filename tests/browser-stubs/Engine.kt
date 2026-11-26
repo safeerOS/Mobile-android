@@ -8,6 +8,7 @@ class ChromiumEngineView(context: Context): View(context) {
     var isDesktopMode = false
     var isPlayingAudio = false
     var hasEditedForm = false
+    var cakaIzbiroDatotek = false
     var progress = 100
     var fullScreen = false
     var destroyed = false

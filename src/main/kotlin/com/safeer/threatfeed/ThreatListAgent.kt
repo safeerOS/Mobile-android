@@ -60,7 +60,15 @@ data class PlainListSource(
     }
 }
 
-class PlainList(val source: PlainListSource, val entries: List<String>, val fetchedAtEpochSeconds: Long)
+/**
+ * One list with all its entries. The agent hands these to [ThreatListAgent.onLists] only for the duration of that call
+ * and does not keep them: the entries (hundreds of thousands of strings, ~20 MB on the TV, measured 4. 11. 2026) are
+ * needed only to build the engines. [sha256] is the SHA-256 of the saved list file ("" when unknown).
+ */
+class PlainList(val source: PlainListSource, val entries: List<String>, val fetchedAtEpochSeconds: Long, val sha256: String = "")
+
+/** What the agent keeps in memory about a list in use: no entries, only their number and checksum. */
+class PlainListInfo(val source: PlainListSource, val count: Int, val sha256: String, val fetchedAtEpochSeconds: Long)
 
 data class ListStatus(
     val sourceId: String,
@@ -182,6 +190,18 @@ class ThreatListAgent(
     private val intervalSeconds: Long = 6 * 3600L,
     private val retrySeconds: Long = 3600L,
     private val clock: () -> Long = { System.currentTimeMillis() / 1000 },
+    /**
+     * Called once after the first load of the saved lists has finished (after [onLists], also when nothing was saved),
+     * so that a caller can hold back the first requests of a cold start until the protection is complete.
+     */
+    private val onFirstLoad: () -> Unit = {},
+    /**
+     * Receives the lists read by a partial first load (start(firstLoadOnly)): only those ids, the other saved lists stay
+     * on disk. The caller already serves them from its own index (for example a mapped file built from the same SHA-256).
+     */
+    private val onPartialLists: (List<PlainList>) -> Unit = {},
+    /** Thread priority of the first load (it decides how long a cold start runs without the lists); later work runs at MIN. */
+    private val firstLoadPriority: Int = Thread.MIN_PRIORITY,
     /** Receives every list in use: once after loading the saved lists and after every change. */
     private val onLists: (List<PlainList>) -> Unit,
 ) {
@@ -194,7 +214,8 @@ class ThreatListAgent(
     private var scheduled: ScheduledFuture<*>? = null
     private val random = java.security.SecureRandom()
 
-    @Volatile var lists: List<PlainList> = emptyList()
+    /** Lists in use (metadata only; the entries were delivered to [onLists] and dropped). */
+    @Volatile var lists: List<PlainListInfo> = emptyList()
         private set
     @Volatile var lastError: String = ""
         private set
@@ -212,9 +233,13 @@ class ThreatListAgent(
     private fun metaFile(id: String) = File(directory, "$id.meta")
     private val stateFile get() = File(directory, "agent.state")
 
-    /** Starts the agent on a background thread and returns immediately. */
+    /**
+     * Starts the agent on a background thread and returns immediately. With [firstLoadOnly] the first load reads and
+     * verifies only those lists (to [onPartialLists]); the others are taken over from their metadata (count, SHA-256,
+     * validators) without reading their entries, so updates and rebuilds work as after a full load.
+     */
     @Synchronized
-    fun start(): Boolean {
+    fun start(firstLoadOnly: Set<String>? = null): Boolean {
         if (executor != null) return false
         val service = Executors.newSingleThreadScheduledExecutor { runnable ->
             Thread(runnable, "safeer-threat-lists").apply {
@@ -223,7 +248,22 @@ class ThreatListAgent(
             }
         }
         executor = service
-        service.execute { if (loadSaved().isNotEmpty()) notifyLists() }
+        service.execute {
+            val thread = Thread.currentThread()
+            try {
+                thread.priority = firstLoadPriority
+                if (firstLoadOnly == null) {
+                    val loaded = loadSaved()
+                    if (loaded.isNotEmpty()) notifyLists(loaded)
+                } else {
+                    val loaded = loadSaved(firstLoadOnly)
+                    try { onPartialLists(loaded) } catch (e: Exception) { /* a listener must not stop the agent */ }
+                }
+            } finally {
+                thread.priority = Thread.MIN_PRIORITY
+                try { onFirstLoad() } catch (e: Exception) { /* a listener must not stop the agent */ }
+            }
+        }
         schedule(startDelayMs, periodic = false)
         return true
     }
@@ -250,33 +290,71 @@ class ThreatListAgent(
         return true
     }
 
-    /** Loads the lists saved by an earlier run; damaged files are ignored (and downloaded again). */
-    fun loadSaved(): List<PlainList> = synchronized(lock) {
+    /** Reads and delivers every saved list to [onLists] again on the agent thread (for example when a caller's index is damaged). */
+    @Synchronized
+    fun reloadSaved(): Boolean {
+        val service = executor ?: return false
+        service.execute {
+            val loaded = try { loadSaved() } catch (e: Exception) { emptyList() }
+            if (loaded.isNotEmpty()) notifyLists(loaded)
+        }
+        return true
+    }
+
+    /** Metadata of the saved lists (count, SHA-256) in source order, without reading the lists: a few small files. */
+    fun savedInfo(): List<PlainListInfo> = sources.mapNotNull { source ->
+        readMeta(source.id)?.let { PlainListInfo(source, it.count, it.sha256, it.fetchedAt) }
+    }
+
+    /**
+     * Loads the lists saved by an earlier run; damaged files are ignored (and downloaded again). The caller gets the
+     * entries; the agent keeps only [lists] (metadata). With [only], lists outside it are not read: their metadata is used
+     * as saved (refresh() reads and verifies them when it needs their entries).
+     */
+    fun loadSaved(only: Set<String>? = null): List<PlainList> = synchronized(lock) {
+        removeStaleTemp()
         val loaded = ArrayList<PlainList>()
+        val infos = ArrayList<PlainListInfo>()
         for (source in sources) {
             val meta = readMeta(source.id) ?: continue
-            try {
-                val bytes = listFile(source.id).readBytes()
-                if (sha256(bytes) != meta.sha256) throw IOException("checksum mismatch")
-                val entries = if (bytes.isEmpty()) emptyList() else String(bytes, Charsets.UTF_8).split('\n')
-                if (entries.size != meta.count) throw IOException("entry count mismatch")
-                loaded.add(PlainList(source, entries, meta.fetchedAt))
+            if (only != null && source.id !in only) {
                 validators[source.id] = meta
-            } catch (e: Exception) {
-                validators.remove(source.id)
-            } catch (e: OutOfMemoryError) {
+                infos.add(PlainListInfo(source, meta.count, meta.sha256, meta.fetchedAt))
+                continue
+            }
+            val list = readSaved(source, meta)
+            if (list != null) {
+                loaded.add(list)
+                infos.add(list.info())
+                validators[source.id] = meta
+            } else {
                 validators.remove(source.id)
             }
         }
-        lists = loaded
+        lists = infos
         statuses = sources.map { source ->
             val old = readStatus(source.id)
-            val saved = loaded.find { it.source.id == source.id }
+            val saved = infos.find { it.source.id == source.id }
             if (saved != null) old ?: ListStatus(source.id, lastSuccessEpochSeconds = saved.fetchedAtEpochSeconds)
             else (old ?: ListStatus(source.id)).copy(error = "No valid saved list")
         }
         loaded
     }
+
+    /** One saved list with its entries, checked against [meta]; null when the file is missing or damaged. */
+    private fun readSaved(source: PlainListSource, meta: Meta): PlainList? = try {
+        val bytes = listFile(source.id).readBytes()
+        if (sha256(bytes) != meta.sha256) throw IOException("checksum mismatch")
+        val entries = if (bytes.isEmpty()) emptyList() else String(bytes, Charsets.UTF_8).split('\n')
+        if (entries.size != meta.count) throw IOException("entry count mismatch")
+        PlainList(source, entries, meta.fetchedAt, meta.sha256)
+    } catch (e: Exception) {
+        null
+    } catch (e: OutOfMemoryError) {
+        null
+    }
+
+    private fun PlainList.info() = PlainListInfo(source, entries.size, sha256, fetchedAtEpochSeconds)
 
     /** Checks every list; returns how many changed. Skipped within the restart throttle unless forced. */
     fun refresh(force: Boolean = false): Int = synchronized(lock) {
@@ -284,11 +362,12 @@ class ThreatListAgent(
         if (!force && now - lastCheck() in 0 until minCheckIntervalSeconds && lists.size == sources.size) return 0
         isRefreshing = true
         try {
-            val current = lists.associateBy { it.source.id }.toMutableMap()
+            val inUse = lists.associateBy { it.source.id }
+            val fresh = HashMap<String, PlainList>()
             val errors = ArrayList<String>()
             var changed = 0
             for (source in sources) {
-                val known = validators[source.id]?.takeIf { current.containsKey(source.id) }
+                val known = validators[source.id]?.takeIf { inUse.containsKey(source.id) }
                 val previous = statuses.find { it.sourceId == source.id } ?: ListStatus(source.id)
                 var failure = ""
                 try {
@@ -309,7 +388,7 @@ class ThreatListAgent(
                     atomicWrite(listFile(source.id), bytes)
                     writeMeta(source.id, meta)
                     validators[source.id] = meta
-                    current[source.id] = PlainList(source, entries, now)
+                    fresh[source.id] = PlainList(source, entries, now, meta.sha256)
                     changed++
                 } catch (e: Exception) {
                     failure = "${e.javaClass.simpleName}: ${e.message}".take(240)
@@ -331,8 +410,17 @@ class ThreatListAgent(
                 atomicWrite(stateFile, "lastCheck=$now\n".toByteArray(Charsets.US_ASCII))
             } catch (e: IOException) { /* throttle is best effort */ }
             if (changed > 0) {
-                lists = sources.mapNotNull { current[it.id] }
-                notifyLists()
+                // The listener rebuilds the engines from every list, so the unchanged ones are read back from disk (checked
+                // with SHA-256) instead of being kept in memory between updates.
+                val all = sources.mapNotNull { source ->
+                    fresh[source.id] ?: inUse[source.id]?.let { info ->
+                        validators[source.id]?.takeIf { it.sha256 == info.sha256 }?.let { readSaved(source, it) }
+                            ?: run { validators.remove(source.id); errors.add("${source.id}: saved list unreadable"); null }
+                    }
+                }
+                lastError = errors.joinToString("; ")
+                lists = all.map { it.info() }
+                notifyLists(all)
             }
             changed
         } finally { isRefreshing = false }
@@ -357,8 +445,8 @@ class ThreatListAgent(
         0L
     }
 
-    private fun notifyLists() {
-        try { onLists(lists) } catch (e: Exception) { /* a listener must not stop the agent */ }
+    private fun notifyLists(all: List<PlainList>) {
+        try { onLists(all) } catch (e: Exception) { /* a listener must not stop the agent */ }
     }
 
     @Synchronized
@@ -396,15 +484,37 @@ class ThreatListAgent(
         if (!directory.isDirectory && !directory.mkdirs()) throw IOException("cannot create ${directory.name}")
     }
 
-    private fun atomicWrite(target: File, data: ByteArray) {
-        val temp = File(target.parentFile, "${target.name}.tmp")
+    private fun atomicWrite(target: File, data: ByteArray) = atomicReplace(target, data)
+
+    /** Temporary files of a write that was cut off (process killed); fresh ones may belong to a write in progress. */
+    private fun removeStaleTemp() {
+        val limit = System.currentTimeMillis() - STALE_TEMP_MS
+        try {
+            directory.listFiles { f -> f.isFile && f.name.endsWith(".tmp") && f.lastModified() < limit }?.forEach { it.delete() }
+        } catch (e: Exception) { /* best effort */ }
+    }
+
+    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+}
+
+private const val STALE_TEMP_MS = 3_600_000L
+
+/**
+ * Replaces [target] atomically through a temporary file with a unique name in the same directory. The browser and Safeer
+ * Scit (its own process) may write the same list at the same time; with the fixed name "<name>.tmp" one process truncated
+ * or moved away the other's half-written file (4. 11. 2026). On failure the temporary file is removed.
+ */
+internal fun atomicReplace(target: File, data: ByteArray) {
+    val temp = File.createTempFile("${target.name}.", ".tmp", target.parentFile)
+    try {
         FileOutputStream(temp).use { out ->
             out.write(data)
             out.flush()
             out.fd.sync()
         }
         Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    } catch (e: Throwable) {
+        temp.delete()
+        throw e
     }
-
-    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 }

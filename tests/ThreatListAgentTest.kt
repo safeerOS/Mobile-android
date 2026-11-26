@@ -170,6 +170,18 @@ fun main() {
             check(e.message == "only HTTPS is allowed")
         }
     }
+    test("first load is reported also when nothing is saved (first start after install: no endless wait)") {
+        val empty = Files.createTempDirectory("safeer-lists-empty").toFile()
+        val done = CountDownLatch(1)
+        var listsCalls = 0
+        val a = ThreatListAgent(empty, sources(server), HttpsListFetcher(allowPlainHttpForTests = true), startDelayMs = 60_000,
+            onFirstLoad = { done.countDown() }) { listsCalls++ }
+        a.start()
+        check(done.await(2, TimeUnit.SECONDS)) { "first load not reported" }
+        check(listsCalls == 0) { "no saved lists, no listener call" }
+        a.stop()
+        empty.deleteRecursively()
+    }
     test("first start: returns at once, downloads after the delay and saves the lists") {
         server.delayMs = 1500
         val delivered = CountDownLatch(1)
@@ -194,7 +206,7 @@ fun main() {
         a.start()
         check(delivered.await(5, TimeUnit.SECONDS)) { "saved lists not loaded" }
         check(server.downloads.get() + server.notModified.get() == requestsBefore) { "network used before the delay" }
-        check(a.lists.size == 2 && a.lists[0].entries.size == 32)
+        check(a.lists.size == 2 && a.lists[0].count == 32 && a.lists[0].sha256.length == 64)
         a.stop()
         val b = agent(dir, server)
         b.loadSaved()
@@ -218,6 +230,11 @@ fun main() {
         a.loadSaved()
         check(a.refresh() == 1) { a.lastError }
         check(got.size == 2 && got[0].entries.contains("new-threat.example") && !got[0].entries.contains("evil-two.example"))
+        // The unchanged list is no longer kept in memory: it is read back from disk for the listener.
+        check(got[1].source.id == "phishing-army" && got[1].entries.size == 25) { got.map { it.entries.size }.toString() }
+        check(a.lists.map { it.count } == got.map { it.entries.size } && got[0].sha256 == a.lists[0].sha256 && got[0].sha256.length == 64) {
+            a.lists.map { it.count }.toString()
+        }
         val reloaded = agent(dir, server).loadSaved()
         check(reloaded[0].entries.contains("new-threat.example"))
     }
@@ -227,7 +244,8 @@ fun main() {
         val a = agent(dir, server)
         a.loadSaved()
         check(a.refresh() == 0)
-        check(a.lastError.contains("urlhaus") && a.lists[0].entries.contains("new-threat.example")) { a.lastError }
+        check(a.lastError.contains("urlhaus") && a.lists.size == 2) { a.lastError }
+        check(agent(dir, server).loadSaved()[0].entries.contains("new-threat.example"))
         server.brokenHosts = false
     }
     test("damaged saved list is ignored and downloaded in full") {
@@ -237,9 +255,12 @@ fun main() {
         val loaded = a.loadSaved()
         check(loaded.size == 1 && loaded[0].source.id == "phishing-army") { loaded.map { it.source.id }.toString() }
         val conditionalBefore = server.conditional.get()
-        check(a.refresh() == 1) { a.lastError }
+        var got: List<PlainList> = emptyList()
+        val b = agent(dir, server) { got = it }
+        b.loadSaved()
+        check(b.refresh() == 1) { b.lastError }
         check(server.conditional.get() == conditionalBefore + 1) { "sent a validator for the damaged list" }
-        check(a.lists.size == 2 && !a.lists[0].entries.contains("injected.example"))
+        check(b.lists.size == 2 && got.size == 2 && !got[0].entries.contains("injected.example"))
     }
     test("per-source freshness: 304 succeeds, errors keep last success, restart preserves status") {
         val statusDir = Files.createTempDirectory("safeer-list-status").toFile()
@@ -266,11 +287,63 @@ fun main() {
         check(!a.isRefreshing)
         statusDir.deleteRecursively()
     }
+    test("partial first load reads only the requested lists; the others keep their metadata and come back on a change (4. 11. 2026)") {
+        val partial = java.util.concurrent.atomic.AtomicReference<List<PlainList>?>(null)
+        val full = java.util.concurrent.atomic.AtomicReference<List<PlainList>?>(null)
+        val first = CountDownLatch(1)
+        val a = ThreatListAgent(
+            dir, sources(server), HttpsListFetcher(allowPlainHttpForTests = true), startDelayMs = 60_000, minCheckIntervalSeconds = 0,
+            onFirstLoad = { first.countDown() }, onPartialLists = { partial.set(it) }, firstLoadPriority = Thread.NORM_PRIORITY,
+            onLists = { full.set(it) },
+        )
+        val info = a.savedInfo()
+        check(info.map { it.source.id } == listOf("urlhaus", "phishing-army") && info.all { it.sha256.length == 64 && it.count > 0 }) { "metadata" }
+        a.start(setOf("phishing-army"))
+        check(first.await(5, TimeUnit.SECONDS)) { "first load not reported" }
+        check(partial.get()?.map { it.source.id } == listOf("phishing-army") && partial.get()!![0].entries.size == 25) { "only the requested list is read" }
+        check(full.get() == null) { "no full delivery on a partial first load" }
+        check(a.lists.map { it.source.id } == listOf("urlhaus", "phishing-army") && a.lists.map { it.sha256 } == info.map { it.sha256 }) {
+            "lists in use include the unread one"
+        }
+        server.hosts = FakeLists.hostsFile("evil-one.example", "partial-new.example")
+        val updated = CountDownLatch(1)
+        var changed = -1
+        check(a.requestUpdate { changed = it; updated.countDown() })
+        check(updated.await(10, TimeUnit.SECONDS))
+        val all = full.get()
+        check(changed == 1) { "changed=$changed error=${a.lastError}" }
+        check(all != null && all.map { it.source.id } == listOf("urlhaus", "phishing-army") && all[0].entries.contains("partial-new.example") &&
+            all[1].entries.size == 25) { "a change delivers every list (the unread one from disk): ${all?.map { it.entries.size }}" }
+        full.set(null)
+        check(a.reloadSaved())
+        val t = System.currentTimeMillis()
+        while (full.get() == null && System.currentTimeMillis() - t < 5_000) Thread.sleep(20)
+        check(full.get()?.size == 2) { "reloadSaved delivers every saved list" }
+        a.stop()
+    }
+
     test("server offline keeps every list") {
         server.stop()
         val a = agent(dir, server)
         a.loadSaved()
         check(a.refresh() == 0 && a.lists.size == 2 && a.lastError.isNotEmpty())
+    }
+    test("entries are not kept after the listener returns (RAM, 4. 11. 2026)") {
+        val delivered = CountDownLatch(1)
+        var weak: java.lang.ref.WeakReference<List<String>>? = null
+        val a = agent(dir, server, delayMs = 60_000) { weak = java.lang.ref.WeakReference(it[0].entries); delivered.countDown() }
+        a.start()
+        check(delivered.await(5, TimeUnit.SECONDS))
+        Thread.sleep(100)
+        var cleared = false
+        for (i in 0 until 20) {
+            System.gc()
+            if (weak?.get() == null) { cleared = true; break }
+            Thread.sleep(50)
+        }
+        check(cleared) { "the agent still holds the list entries" }
+        check(a.lists.size == 2 && a.lists[0].count > 0)
+        a.stop()
     }
     test("listener errors do not stop the agent") {
         val a = agent(dir, server, delayMs = 60_000) { throw IllegalStateException("boom") }
@@ -278,6 +351,39 @@ fun main() {
         Thread.sleep(300)
         check(a.lists.size == 2)
         a.stop()
+    }
+
+    test("concurrent writes of the same file: no exception, whole content, no temporary files (two processes, 4. 11. 2026)") {
+        val mapa = Files.createTempDirectory("safeer-atomic").toFile()
+        try {
+            val cilj = File(mapa, "hagezi-pro.list")
+            val vsebine = (0 until 2).map { n -> ByteArray(256 * 1024) { (n + 'a'.code).toByte() } }
+            val napake = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+            val zacni = CountDownLatch(1)
+            val niti = vsebine.map { v ->
+                Thread {
+                    zacni.await()
+                    repeat(200) { try { atomicReplace(cilj, v) } catch (e: Throwable) { napake.add(e) } }
+                }.apply { start() }
+            }
+            zacni.countDown()
+            niti.forEach { it.join(60_000) }
+            check(napake.isEmpty()) { "${napake.size} errors, first: ${napake.peek()}" }
+            val koncna = cilj.readBytes()
+            check(vsebine.any { it.contentEquals(koncna) }) { "torn content (${koncna.size} bytes)" }
+            val ostanki = mapa.list().orEmpty().filter { it != cilj.name }
+            check(ostanki.isEmpty()) { "left over: $ostanki" }
+        } finally { mapa.deleteRecursively() }
+    }
+    test("stale temporary files are removed on load, fresh ones and lists are kept") {
+        val mapa = Files.createTempDirectory("safeer-stale").toFile()
+        try {
+            val star = File(mapa, "urlhaus.list.123.tmp").apply { writeText("x"); setLastModified(System.currentTimeMillis() - 2 * 3600_000L) }
+            val svez = File(mapa, "urlhaus.list.456.tmp").apply { writeText("y") }
+            val seznam = File(mapa, "urlhaus.list").apply { writeText("a.example"); setLastModified(System.currentTimeMillis() - 2 * 3600_000L) }
+            ThreatListAgent(mapa, listOf(HOSTS)) { }.loadSaved()
+            check(!star.exists() && svez.exists() && seznam.exists()) { mapa.list().orEmpty().toList().toString() }
+        } finally { mapa.deleteRecursively() }
     }
 
     dir.deleteRecursively()

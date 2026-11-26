@@ -50,6 +50,16 @@ class ChromiumEngineView @JvmOverloads constructor(
             settings.loadWithOverviewMode = true
         }
 
+    /** Zadnji dotik uporabnika: zunanjo aplikacijo sme stran odpreti samo po njem (SpletVarnostPravila). */
+    private val zagonDejanje = SpletVarnostPravila.PorabljivoDejanje()
+
+    internal fun msOdDejanja(): Long = zagonDejanje.msOd(android.os.SystemClock.uptimeMillis())
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.actionMasked == android.view.MotionEvent.ACTION_UP) zagonDejanje.oznaci(android.os.SystemClock.uptimeMillis())
+        return super.dispatchTouchEvent(event)
+    }
+
     private var failedNavigationUrl: String? = null
     private val emudhraZastavica = EmudhraRevocations.ZastavicaOpozorila()
 
@@ -90,6 +100,10 @@ class ChromiumEngineView @JvmOverloads constructor(
 
     /** PDF pregledovalnik prosi za prenos izvirnika (url, userAgent) - opravi ga navaden prenos. */
     var onPdfPrenos: ((String, String?) -> Unit)? = null
+    /** Stran odpira izbiro datotek (<input type=file>); MainActivity zazene sistemski izbirnik. */
+    var onIzbiraDatotek: ((ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams) -> Boolean)? = null
+    /** Sistemski izbirnik je odprt: zavihek ne sme zaspati, sicer se izbrana datoteka nima kam vrniti. */
+    @Volatile var cakaIzbiroDatotek: Boolean = false
     @Volatile var hasEditedForm: Boolean = false
         private set
 
@@ -240,8 +254,9 @@ class ChromiumEngineView @JvmOverloads constructor(
             if (target.isEmpty()) return
             val runner = Runnable {
                 val cur = webView.url ?: ""
-                val isLocal = cur.startsWith("file:///android_asset/") || cur.startsWith("safeer://") || cur.isEmpty()
-                if (!isLocal) {
+                // N17 (tedenski pregled 4. 11. 2026): samo domaca stran brskalnika, ista vrata kot TV - prazen naslov,
+                // about:blank in druge strani iz aplikacije ne.
+                if (!SpletVarnostPravila.jeDomacaBrskalnika(cur)) {
                     android.util.Log.w("SafeerBridge", "Zavrnjen neavtoriziran klic navigate() iz zunanje strani: $cur")
                     return@Runnable
                 }
@@ -288,6 +303,8 @@ class ChromiumEngineView @JvmOverloads constructor(
     }
 
     override fun loadUrl(url: String) {
+        // Zadnja vrata (UXSS, 4. 11. 2026 kot TV): javascript:/data: z loadUrl bi tekel v izvoru odprte strani.
+        if (SpletVarnostPravila.skriptniNaslov(url)) return
         failedNavigationUrl = null
         if (PdfPregledovalnik.jeLokalni(url)) {
             // PDF z naprave: ne nalaga ga WebView (content:// mu ni dovoljen), ampak nas pregledovalnik.
@@ -303,6 +320,7 @@ class ChromiumEngineView @JvmOverloads constructor(
     }
 
     override fun loadUrl(url: String, additionalHttpHeaders: Map<String, String>) {
+        if (SpletVarnostPravila.skriptniNaslov(url)) return
         failedNavigationUrl = null
         if (PdfPregledovalnik.jeLokalni(url)) {
             // PDF z naprave: ne nalaga ga WebView (content:// mu ni dovoljen), ampak nas pregledovalnik.
@@ -420,6 +438,16 @@ class ChromiumEngineView @JvmOverloads constructor(
             // siva ploskev z ogromnim gumbom za predvajanje cez cel zaslon. Vrnemo
             // prazno (prosojno) sliko, da ostane vidno ozadje strani.
             override fun getDefaultVideoPoster(): android.graphics.Bitmap? = prazenPlakat
+
+            // Brez tega WebView izbiro datotek tiho preklice in nalaganje na strani ne dela (do 4. 11. 2026).
+            override fun onShowFileChooser(
+                webView: android.webkit.WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                if (filePathCallback == null || fileChooserParams == null) return false
+                return try { onIzbiraDatotek?.invoke(filePathCallback, fileChooserParams) ?: false } catch (_: Exception) { false }
+            }
 
             // Okna JavaScripta: privzeti WebChromeClient jih tiho preklice, zato jih
             // narisemo sami -- sicer prijave in potrditve na straneh ne delujejo.
@@ -648,32 +676,36 @@ class ChromiumEngineView @JvmOverloads constructor(
                     return true
                 }
 
-                // 3. Odpri posebne zunanje sheme v ustreznih aplikacijah z zaščito pred ugrabitvijo Intentov
+                // 3. Posebne sheme odpremo v drugi aplikaciji - varno, enako kot na TV (tedenski pregled 4. 11. 2026):
+                //    prej so ostali dodatki, ClipData in zastavice strani, zagon je sel tudi brez kretnje, rezervni naslov
+                //    browser_fallback_url pa se je nalozil brez preverbe sheme (javascript: = UXSS v izvoru trenutne strani).
+                //    Zdaj: brez komponente, izbirnika, ClipData, dodatkov in tujih zastavic, kategorija BROWSABLE, samo VIEW,
+                //    nikoli nas paket ali krajevne sheme, samo po uporabnikovem dejanju; rezervni naslov samo http(s).
                 val scheme = uri.scheme?.lowercase() ?: ""
                 if (scheme != "http" && scheme != "https" && scheme != "file" && scheme != "about" && scheme != "safeer") {
-                    try {
-                        val intent = if (urlStr.startsWith("intent:", ignoreCase = true)) {
-                            val parsed = Intent.parseUri(urlStr, Intent.URI_INTENT_SCHEME)
-                            parsed.addCategory(Intent.CATEGORY_BROWSABLE)
-                            parsed.component = null
-                            parsed.selector = null
-                            parsed
-                        } else {
-                            Intent(Intent.ACTION_VIEW, uri)
-                        }
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        context.startActivity(intent)
+                    val jeIntent = urlStr.startsWith("intent:", ignoreCase = true)
+                    val namera = try {
+                        if (jeIntent) Intent.parseUri(urlStr, Intent.URI_INTENT_SCHEME) else Intent(Intent.ACTION_VIEW, uri)
                     } catch (_: Exception) {
-                        try {
-                            if (urlStr.startsWith("intent:", ignoreCase = true)) {
-                                val parsed = Intent.parseUri(urlStr, Intent.URI_INTENT_SCHEME)
-                                val fallbackUrl = parsed.getStringExtra("browser_fallback_url")
-                                if (!fallbackUrl.isNullOrEmpty()) {
-                                    view?.loadUrl(fallbackUrl)
-                                }
-                            }
-                        } catch (_: Exception) {}
+                        null
+                    } ?: return true
+                    val rezerva = if (jeIntent) try { namera.getStringExtra("browser_fallback_url") } catch (_: Exception) { null } else null
+                    namera.component = null
+                    namera.selector = null
+                    namera.clipData = null
+                    namera.replaceExtras(null as android.os.Bundle?)
+                    namera.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    namera.addCategory(Intent.CATEGORY_BROWSABLE)
+                    val shemaPodatkov = namera.data?.scheme ?: if (jeIntent) null else scheme
+                    val dovoljena = SpletVarnostPravila.dovoljenaNamera(namera.action, shemaPodatkov, namera.`package`, context.packageName) &&
+                        SpletVarnostPravila.dovoljenZunanjiZagon(request.hasGesture(), msOdDejanja())
+                    var odprto = false
+                    if (dovoljena) {
+                        try { context.startActivity(namera); odprto = true; zagonDejanje.porabi() } catch (_: Exception) {}
+                    } else {
+                        android.util.Log.w("SafeerSecurity", "Zavrnjena namera s strani (shema ${shemaPodatkov ?: "-"}, kretnja ${request.hasGesture()}).")
                     }
+                    if (!odprto && SpletVarnostPravila.varenRezervniNaslov(rezerva)) view?.loadUrl(rezerva!!)
                     return true
                 }
 

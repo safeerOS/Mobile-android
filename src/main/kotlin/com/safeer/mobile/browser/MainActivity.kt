@@ -26,12 +26,15 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
     companion object {
         /** Dodatek namere: ob zagonu odpri seznam prenosov (obvestilo o prejeti datoteki prek Safeer Linka). */
         const val ODPRI_PRENOSE = "com.safeer.mobile.browser.ODPRI_PRENOSE"
+        /** Obvestilo Linka: odpri domaco stran (brez naslova v nameri; SpletVarnostPravila.obvestiloStrani). */
+        const val EXTRA_ODPRI_DOMACO = "com.safeer.mobile.browser.ODPRI_DOMACO"
         private const val REQ_CODE_PERMISSIONS = 1001
         private const val REQ_CODE_GEO_PERMISSIONS = 1002
         private const val REQ_CODE_NOTIFICATION = 1003
         private const val REQ_CODE_DEFAULT_BROWSER = 1004
         private const val REQ_CODE_LINK_DATOTEKA = 1005
         private const val REQ_CODE_LINK_ZASLON = 1006
+        private const val REQ_CODE_IZBIRA_DATOTEK = 1007
     }
 
     private var keyboardWasVisible = false
@@ -187,7 +190,10 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                         startActivity(Intent(this, com.safeer.mobile.browser.link.QrPrijavaActivity::class.java).setData(intent.data))
                         return
                     }
-                    targetUrl = intent.dataString
+                    // Izvozena dejavnost (UXSS, 4. 11. 2026 kot TV): samo http(s) ali krajevni PDF; nas ponudnik
+                    // content:// samo s podeljenim branjem.
+                    val branje = (intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0
+                    targetUrl = varenVhod(intent.dataString, SpletVarnostPravila.Vhod.NAMERA, branje)
                 }
                 Intent.ACTION_WEB_SEARCH -> {
                     val query = intent.getStringExtra(android.app.SearchManager.QUERY)
@@ -201,7 +207,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                         val shared = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim() ?: ""
                         if (shared.isNotBlank()) {
                             targetUrl = if (shared.startsWith("http://") || shared.startsWith("https://")) {
-                                shared
+                                varenVhod(shared, SpletVarnostPravila.Vhod.SPLET)
                             } else {
                                 PreferencesManager.buildSearchUrl(this, shared)
                             }
@@ -209,6 +215,13 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                     }
                 }
             }
+        }
+
+        // Daljinec »home« prek obvestila (4. 11. 2026): samo zastavica, naslov je nasa konstanta - od tuje aplikacije
+        // odpre kvecjemu domaco stran.
+        if (intent?.getBooleanExtra(EXTRA_ODPRI_DOMACO, false) == true) {
+            intent.removeExtra(EXTRA_ODPRI_DOMACO)
+            if (targetUrl == null) targetUrl = SpletVarnostPravila.DOMACA_BRSKALNIKA
         }
 
         val restored = isInitial && tabManager.restoreSession()
@@ -262,6 +275,17 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_CODE_IZBIRA_DATOTEK) {
+            // Strani gre samo, kar je vrnil sistemski izbirnik (content://), nikoli naslov iz strani.
+            val surovi = mutableListOf<String?>()
+            if (resultCode == RESULT_OK && data != null) {
+                data.clipData?.let { c -> for (i in 0 until c.itemCount) surovi += c.getItemAt(i).uri?.toString() }
+                surovi += data.data?.toString()
+            }
+            val sprejeti = IzbiraDatotek.sprejmi(surovi, packageName, izbiraVec).map { android.net.Uri.parse(it) }
+            koncajIzbiroDatotek(if (sprejeti.isEmpty()) null else sprejeti.toTypedArray())
+            return
+        }
         if (requestCode == REQ_CODE_DEFAULT_BROWSER) {
             Toast.makeText(this, if (isDefaultBrowser()) R.string.default_browser_active else R.string.default_browser_unchanged, Toast.LENGTH_LONG).show()
         }
@@ -349,7 +373,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         com.safeer.mobile.browser.cast.HubKrmilnik.naPrijavoZaZaslon = { runOnUiThread { pokaziKodoZaSeznanitev() } }
         pokaziKodoZaSeznanitev()
         // Sprejem prek Safeer Linka, ko je brskalnik v ospredju: stran v zavihek, besedilo v okno.
-        com.safeer.mobile.browser.link.LinkSprejemnik.naStran = { url -> runOnUiThread { openUrlInBrowser(url) } }
+        com.safeer.mobile.browser.link.LinkSprejemnik.naStran = { url -> runOnUiThread { odpriOdZunaj(url) } }
         com.safeer.mobile.browser.link.LinkSprejemnik.naBesedilo = { od, b -> runOnUiThread { pokaziPrejetoBesedilo(od, b) } }
         com.safeer.mobile.browser.link.LinkSprejemnik.naUkaz = this
         // Ce je uporabnik Safeer Link pustil prizgan oz. je telefon seznanjen, naj to velja tudi po ponovnem zagonu.
@@ -385,8 +409,18 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Zaspan aktivni zavihek se zbudi, preden je okno spet vidno (onResume ga le nadaljuje).
+        if (::tabManager.isInitialized) tabManager.naPrihod()
+    }
+
     override fun onStop() {
-        tabManager.saveSession()
+        if (::tabManager.isInitialized) {
+            tabManager.saveSession()
+            // Ni na zaslonu (ne le onPause zaradi pogovornega okna): cez 3 min zaspi tudi aktivni zavihek, ce ne predvaja (ob onTrimMemory takoj).
+            tabManager.naOdhod()
+        }
         super.onStop()
     }
 
@@ -400,6 +434,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
     }
 
     override fun onDestroy() {
+        koncajIzbiroDatotek(null)
         MediaPlaybackService.toggleHandler = null
         MediaPlaybackService.pauseHandler = null
         MediaPlaybackService.stop(this)
@@ -478,6 +513,19 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         val b64 = android.util.Base64.encodeToString(izhod.toByteArray(), android.util.Base64.NO_WRAP)
         return com.safeer.mobile.browser.link.Daljinec.Izid(true, "Posnetek zaslona",
             org.json.JSONObject().put("image", "data:image/jpeg;base64," + b64).put("width", w).put("height", h))
+    }
+
+    /** Naslov od zunaj (namera, Safeer Link) ali null; zavrnjen se ne nalozi (javascript:, data:, intent: ...). */
+    private fun varenVhod(url: String?, vhod: SpletVarnostPravila.Vhod, dovoljenjeBranja: Boolean = false): String? {
+        if (url.isNullOrEmpty()) return null
+        if (SpletVarnostPravila.vhodniNaslov(url, vhod, dovoljenjeBranja)) return url
+        android.util.Log.w("SafeerBrskalnik", "Zavrnjen naslov od zunaj ($vhod): " + url.substringBefore(':').take(16))
+        return null
+    }
+
+    /** Stran iz Safeer Linka (cast.url, share.screen, open_url): shemo je izbrala druga naprava. */
+    private fun odpriOdZunaj(url: String) {
+        varenVhod(url, SpletVarnostPravila.Vhod.LINK)?.let { openUrlInBrowser(it) }
     }
 
     private fun openUrlInBrowser(url: String) {
@@ -687,8 +735,61 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
         return true
     }
 
+    private var izbiraDatotek: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
+    private var izbiraPogled: ChromiumEngineView? = null
+    private var izbiraVec = false
+
+    /** <input type=file>: sistemski izbirnik (SAF), brez dovoljenja za shrambo. */
+    private fun odpriIzbiroDatotek(
+        pogled: ChromiumEngineView,
+        povratek: android.webkit.ValueCallback<Array<android.net.Uri>>,
+        parametri: android.webkit.WebChromeClient.FileChooserParams
+    ): Boolean {
+        // Nedokoncan prejsnji izbor zapremo s praznim odgovorom, sicer WebView naslednjega ne odpre.
+        koncajIzbiroDatotek(null)
+        val nacin = parametri.mode
+        val odpri = android.webkit.WebChromeClient.FileChooserParams.MODE_OPEN
+        val odpriVec = android.webkit.WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
+        // MODE_SAVE (shrani kot) brskalnik ne podpira: false, da WebView izbor zapre sam.
+        if (nacin != odpri && nacin != odpriVec) return false
+        val vec = nacin == odpriVec
+        val tipi = IzbiraDatotek.mimeTipi(parametri.acceptTypes) { k ->
+            android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(k)
+        }
+        val namera = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = tipi.singleOrNull() ?: IzbiraDatotek.VSE
+            if (tipi.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, tipi.toTypedArray())
+            if (vec) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        izbiraDatotek = povratek
+        izbiraVec = vec
+        izbiraPogled = pogled
+        pogled.cakaIzbiroDatotek = true
+        return try {
+            startActivityForResult(namera, REQ_CODE_IZBIRA_DATOTEK)
+            true
+        } catch (_: Exception) {
+            // Ni izbirnika: vrnemo false, WebView izbor zapre sam (povratka po false ne smemo klicati).
+            izbiraDatotek = null
+            izbiraPogled = null
+            pogled.cakaIzbiroDatotek = false
+            false
+        }
+    }
+
+    /** Odgovor strani: izbrane datoteke ali null ob preklicu - vedno natanko enkrat. */
+    private fun koncajIzbiroDatotek(uriji: Array<android.net.Uri>?) {
+        val povratek = izbiraDatotek ?: return
+        izbiraDatotek = null
+        izbiraPogled?.cakaIzbiroDatotek = false
+        izbiraPogled = null
+        try { povratek.onReceiveValue(uriji) } catch (_: Exception) { }
+    }
+
     private fun attachTabListeners(tab: TabModel) {
         val wv = tab.webView
+        wv.onIzbiraDatotek = { povratek, parametri -> odpriIzbiroDatotek(wv, povratek, parametri) }
 
         wv.onProgressUpdate = { progress ->
             if (tabManager.getActiveTab()?.id == tab.id) {
@@ -1446,7 +1547,7 @@ class MainActivity : android.app.Activity(), com.safeer.mobile.browser.link.Dalj
                 pogled,
                 { Pair(naslovStrani, imeStrani) },
                 { okno.dismiss() },
-                { naslov -> openUrlInBrowser(naslov) },
+                { naslov -> odpriOdZunaj(naslov) },
                 { cilj -> izberiDatotekoZaLink(cilj) },
                 { cilj, ime -> zahtevajZajemZaslona(cilj, ime) }
             )

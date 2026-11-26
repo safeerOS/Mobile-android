@@ -63,6 +63,8 @@ object DatotekeStreznik {
 
     fun nastavi(context: Context, vklop: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KLJUC_VKLOP, vklop).apply()
+        // Tedenski pregled 4. 11. 2026 (S9): izklop takoj ustavi streznik in preklice vse zetone (prej sta ostala).
+        if (!vklop) ustavi()
     }
 
     /** Stanje za stran Linka: {"vklopljeno", "dovoljenje", "deli"} - deli le, ko je oboje. */
@@ -149,11 +151,15 @@ object DatotekeStreznik {
             android.util.Base64.encodeToString(b, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
         }
 
-    private fun zetonVelja(z: String?): Boolean {
-        if (z.isNullOrBlank()) return false
+    /** Naprava, ki ji je bil zeton dan, ali null (primerjava v konstantnem casu). */
+    private fun imetnikZetona(z: String?): String? {
+        if (z.isNullOrBlank()) return null
         val zb = z.toByteArray()
-        return zetoni.values.any { MessageDigest.isEqual(it.toByteArray(), zb) }
+        return zetoni.entries.firstOrNull { MessageDigest.isEqual(it.value.toByteArray(), zb) }?.key
     }
+
+    /** Odvzem dostopa napravi (umik iz ozjega kroga): njen zeton ne velja vec. */
+    fun preklici(idNaprave: String) { zetoni.remove(idNaprave) }
 
     // ------------------------------------------------------------------ streznik
 
@@ -180,6 +186,7 @@ object DatotekeStreznik {
     fun pripravi(context: Context) { appContext = context.applicationContext }
 
     fun ustavi() {
+        zetoni.clear()
         tece.set(false)
         try { vticnica?.close() } catch (_: Throwable) { }
         vticnica = null
@@ -216,8 +223,14 @@ object DatotekeStreznik {
             val zeton = glave["x-safeer-token"]
                 ?: poizvedba.split("&").firstOrNull { it.startsWith("t=") }?.substring(2)?.let { URLDecoder.decode(it, "UTF-8") }
             if (!pot.startsWith("/d/")) { napaka(izhod, 404, "ni take poti"); return }
-            if (!zetonVelja(zeton)) { napaka(izhod, 401, "manjka ali napacen zeton"); return }
+            val imetnik = imetnikZetona(zeton) ?: run { napaka(izhod, 401, "manjka ali napacen zeton"); return }
             val ctx = appContext ?: run { napaka(izhod, 503, "ni pripravljeno"); return }
+            // Tedenski pregled 4. 11. 2026 (S9): zeton velja samo, dokler je deljenje vklopljeno in ima naprava se dostop
+            // do datotek (umik iz kroga ali ozjega kroga ga takoj preklice - Dostop pogleda krog ob vsaki zahtevi).
+            if (!vklopljeno(ctx) || !com.safeer.mobile.browser.cast.Dostop.smeDejanje(ctx, imetnik, "files.list")) {
+                zetoni.remove(imetnik)
+                napaka(izhod, 403, "dostop ni vec dovoljen"); return
+            }
             val uri = uriIz(URLDecoder.decode(pot.substring(3), "UTF-8")) ?: run { napaka(izhod, 404, "datoteke ni"); return }
             if (deli[0] == "POST") { uredi(ctx, uri, glave, vhod, izhod); return }
             val opis = try { ctx.contentResolver.openAssetFileDescriptor(uri, "r") } catch (_: Throwable) { null }

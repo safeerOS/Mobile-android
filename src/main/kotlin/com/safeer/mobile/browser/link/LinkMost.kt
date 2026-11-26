@@ -274,7 +274,9 @@ class LinkMost(
             val dejanje = tovor.optString("action", "")
             val parametriUkaza = tovor.optJSONObject("params") ?: tovor
             try { parametriUkaza.put("_posiljatelj", sporocilo.optString("sender", "")) } catch (_: Throwable) { }
-            val izid = Daljinec.izvedi(dejavnost, dejanje, parametriUkaza, null,
+            // Tedenski pregled 4. 11. 2026: ukaz samo od naprave, ki ji je ta telefon odprl dostop (Dostop).
+            val izid = if (!com.safeer.mobile.browser.cast.Dostop.smeDejanje(dejavnost, sporocilo.optString("sender", ""), dejanje)) Daljinec.NI_DOVOLJENO
+            else Daljinec.izvedi(dejavnost, dejanje, parametriUkaza, null,
                 LinkSprejemnik.DOMACA_STRAN) { url, _ -> zapriZaslon(); odpriVBrskalniku(url) }
             val posiljatelj = sporocilo.optString("sender", "")
             if (posiljatelj.isNotBlank()) nov.posljiSporocilo(Daljinec.sporociloIzida(posiljatelj, sporocilo.optString("id", ""), dejanje, izid))
@@ -710,11 +712,13 @@ class LinkMost(
             val od = LinkVzdevki.ime(dejavnost, sporocilo.optString("sender", ""),
                 sporocilo.optString("sender_name", "").ifBlank { sporocilo.optString("sender", "naprava") })
             val tovor = sporocilo.optJSONObject("payload") ?: JSONObject()
+            // Stran ali zaslon, ki se odpre sam, samo napravi z dostopom (Dostop, tedenski pregled 4. 11. 2026).
+            if (!com.safeer.mobile.browser.cast.Dostop.smeSporocilo(dejavnost, sporocilo.optString("sender", ""), tip, tovor.optString("action", ""))) return
             when (tip) {
                 "cast.url" -> {
                     // Stran s televizorja (ali druge naprave): odpremo jo v brskalniku.
                     val url = tovor.optString("url", "").trim()
-                    if (url.startsWith("http://") || url.startsWith("https://")) {
+                    if (com.safeer.mobile.browser.SpletVarnostPravila.vhodniNaslov(url, com.safeer.mobile.browser.SpletVarnostPravila.Vhod.SPLET)) {
                         odziv("prejeto", JSONObject().put("vrsta", "stran").put("od", od).put("url", url).put("naslov", tovor.optString("title", "")))
                         dejavnost.runOnUiThread { zapriZaslon(); odpriVBrskalniku(url) }
                     }
@@ -729,7 +733,9 @@ class LinkMost(
                     if (dejanje == "start") {
                         val pot = tovor.optString("path", "")
                         val url = if (pot.startsWith("/")) hubHttp() + pot else tovor.optString("url", "")
-                        if (url.isNotBlank()) dejavnost.runOnUiThread { zapriZaslon(); odpriVBrskalniku(url) }
+                        // Naslov je izbrala druga naprava: samo http(s) (UXSS, 4. 11. 2026 kot TV share.screen).
+                        if (com.safeer.mobile.browser.SpletVarnostPravila.vhodniNaslov(url, com.safeer.mobile.browser.SpletVarnostPravila.Vhod.SPLET))
+                            dejavnost.runOnUiThread { zapriZaslon(); odpriVBrskalniku(url) }
                     }
                     odziv("prejeto", JSONObject().put("vrsta", "zaslon").put("od", od).put("dejanje", dejanje))
                 }
@@ -1056,6 +1062,27 @@ class LinkMost(
         }.toString()
     } catch (e: Throwable) {
         "[]"
+    }
+
+    /**
+     * Ozji krog: ali sme naprava [idNaprave] upravljati ta telefon (aplikacije, datoteke, strani, zaslon). Most je samo v
+     * locenem pogledu strani Safeer Link (MainActivity.odpriSafeerLink: samo file:///android_asset/link/), zato o
+     * dostopu odloci uporabnik tega telefona (cast/Dostop, tedenski pregled 4. 11. 2026).
+     */
+    @JavascriptInterface
+    fun dostopNaprave(idNaprave: String): Boolean = try {
+        com.safeer.mobile.browser.cast.Dostop.vOzjemKrogu(dejavnost, idNaprave)
+    } catch (_: Throwable) { false }
+
+    @JavascriptInterface
+    fun nastaviDostopNaprave(idNaprave: String, dovoli: Boolean) {
+        try {
+            com.safeer.mobile.browser.cast.Dostop.nastavi(dejavnost, idNaprave,
+                if (dovoli) com.safeer.mobile.browser.cast.DostopPravila.VSE_ZMOZNOSTI else emptySet())
+            odziv("dostop", JSONObject().put("id", idNaprave).put("dovoljeno", dostopNaprave(idNaprave)))
+        } catch (e: Throwable) {
+            napaka("dostop_ni_shranjen", "Dostopa ni bilo mogoce shraniti: ${e.message}")
+        }
     }
 
     /** Odvzame dostop napravi in jo, ce je povezana, odklopi. */

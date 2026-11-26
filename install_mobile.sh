@@ -1,34 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 📲 INSTALL SCRIPT: SAFEER MOBILE BROWSER (SAMSUNG GALAXY & ANDROID)
+# 📲 SAFEER BROWSER ZA TELEFON (Samsung Galaxy in drugi Android telefoni)
 # ==============================================================================
-set -e
-
+# Tedenski pregled 4. 11. 2026 (S13, kot na TV 28. 10.): skripta je brez APK sama zagnala build_mobile_apk.sh (in s tem
+# lahko nov produkcijski kljuc) in namestila lokalni APK brez preverbe. Uradno izdajo namesti install_safeer.sh
+# (preverba SHA-256 in podpisnika). Razvijalec svoj APK namesti z »adb install -r <apk>«.
+set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APK="$DIR/Safeer-Browser.apk"
-
-if [ ! -f "$APK" ]; then
-    echo "⚠️ APK paket ne obstaja. Najprej gradim..."
-    bash "$DIR/build_mobile_apk.sh"
-fi
-
-echo "=========================================================="
-echo "📲 NAMEŠČAM SAFEER BROWSER NA ANDROID NAPRAVO"
-echo "=========================================================="
-
-DEVICE=$(adb devices | grep -v "List" | grep "device$" | head -n 1 | awk '{print $1}')
-
-if [ -z "$DEVICE" ]; then
-    echo "⚠️ Nobena ADB naprava ni zaznana. Povežite telefon preko USB / Brezžičnega ADB."
-    echo "Namestitveni paket se nahaja tukaj: $APK"
-    exit 0
-fi
-
-echo "📱 Zaznana naprava: $DEVICE"
-echo "📲 Nameščam APK..."
-adb -s "$DEVICE" install -r "$APK"
-
-echo "🚀 Zaganjam Safeer Browser..."
-adb -s "$DEVICE" shell am start -n "com.safeer.mobile.browser/com.safeer.mobile.browser.MainActivity" || adb -s "$DEVICE" shell monkey -p com.safeer.mobile.browser 1
-
-echo "✅ Uspešno nameščeno in zagnano!"
+exec bash "$DIR/install_safeer.sh" "$@"

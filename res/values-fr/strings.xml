@@ -37,6 +37,8 @@
     <string name="ssl_warning_title">Avertissement de sécurité (SSL)</string>
     <string name="ssl_warning_msg">Une connexion sécurisée à %1$s est impossible car le certificat de sécurité est invalide ou expiré.\n\nL’accès a été interrompu pour protéger vos données.</string>
     <string name="ssl_this_site">Ce site web</string>
+    <string name="ssl_compromised_ca_title">Avertissement de sécurité : autorité de certification compromise (eMudhra)</string>
+    <string name="ssl_compromised_ca_msg">Le certificat de ce site a été émis par une autorité de certification révoquée pour cause de clés compromises. Nous n\'ouvrons donc pas le site.</string>
     <string name="toast_prev_tab">◀ Onglet précédent</string>
     <string name="toast_next_tab">Onglet suivant ▶</string>
     <string name="toast_downloading">📥 Téléchargement : %1$s</string>
@@ -89,6 +91,4 @@
     <string name="os_ur_obv_brisanje">Confirmer la suppression de la photo</string>
     <string name="os_ur_obv_vrtenje">Confirmer la rotation de la photo</string>
     <string name="os_ur_obv_opis">La demande vient de Safeer Link. Touchez pour confirmer.</string>
-    <string name="ssl_compromised_ca_title">Avertissement de sécurité : autorité de certification compromise (eMudhra)</string>
-    <string name="ssl_compromised_ca_msg">Le certificat de ce site a été émis par une autorité de certification révoquée en raison de clés compromises. Nous n\'ouvrons donc pas le site.</string>
 </resources>

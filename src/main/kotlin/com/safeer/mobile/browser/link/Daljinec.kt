@@ -59,6 +59,9 @@ object Daljinec {
         }
     }
 
+    /** Odgovor napravi, ki ji ta naprava ni odprla dostopa (cast/Dostop). */
+    val NI_DOVOLJENO = Izid(false, "Ta naprava ti ni odprla dostopa. Dovoli ga na njej v Safeer Linku.", koda = "ni_dovoljeno")
+
     /** Kar zna izvesti samo odprti brskalnik. Vrne null, ce dejanja ne pozna. */
     interface VOspredju {
         fun izvediUkaz(dejanje: String, parametri: JSONObject): Izid?
@@ -158,7 +161,8 @@ object Daljinec {
     private fun odpriUrl(parametri: JSONObject, domacaStran: String, odpriStran: (String, String) -> Unit): Izid {
         var url = parametri.optString("url", "").trim()
         if (url == "home" || url == "safeer://home") url = domacaStran
-        if (!(url.startsWith("http://") || url.startsWith("https://") || url == domacaStran)) {
+        // Ista vrata kot namera in cast.url (UXSS, 4. 11. 2026): http(s) brez kontrolnih znakov ali nasa domaca stran.
+        if (!(url == domacaStran || com.safeer.mobile.browser.SpletVarnostPravila.vhodniNaslov(url, com.safeer.mobile.browser.SpletVarnostPravila.Vhod.SPLET))) {
             return Izid(false, "Dovoljeni so samo naslovi http(s)")
         }
         odpriStran(url, parametri.optString("title", ""))

@@ -22,7 +22,7 @@ fi
 if [ -z "$TOOLS_DIR" ] || [ ! -d "$TOOLS_DIR" ]; then
     echo "❌ Napaka: Orodja za gradnjo niso bila najdena."
     echo "👉 Nastavite okoljsko spremenljivko: export ANDROID_BUILD_TOOLS=/pot/do/orodij"
-    echo "👉 Zahtevana orodja v mapi: kotlinc/, aapt2, r8.jar, android.jar, uber-apk-signer.jar"
+    echo "👉 Zahtevana orodja v mapi: kotlinc/, aapt2, r8.jar, android.jar; za podpis Android build-tools (ANDROID_HOME)"
     exit 1
 fi
 
@@ -134,32 +134,15 @@ if [ -z "$RELEASE_KEY_PASS" ]; then
     exit 1
 fi
 
-if [ ! -f "$RELEASE_KEYSTORE" ]; then
-    echo "🔑 Generiram namenski produkcijski release keystore ($RELEASE_KEYSTORE)..."
-    mkdir -p "$KEYSTORE_DIR"
-    keytool -genkeypair -v \
-        -keystore "$RELEASE_KEYSTORE" \
-        -alias "$RELEASE_KEY_ALIAS" \
-        -keyalg RSA \
-        -keysize 2048 \
-        -validity 10000 \
-        -storepass "$RELEASE_KEY_PASS" \
-        -keypass "$RELEASE_KEY_PASS" \
-        -dname "CN=Safeer Mobile Browser, OU=Safeer Security, O=Safeer, L=Ljubljana, ST=Slovenia, C=SI"
-fi
-
-java -jar "$TOOLS_DIR/uber-apk-signer.jar" \
-    --apks "$BUILD_DIR/unaligned.apk" \
-    --out "$BUILD_DIR/signed" \
-    --ks "$RELEASE_KEYSTORE" \
-    --ksAlias "$RELEASE_KEY_ALIAS" \
-    --ksPass "$RELEASE_KEY_PASS" \
-    --ksKeyPass "$RELEASE_KEY_PASS" \
-    --allowResign
-
-SIGNED_APK=$(find "$BUILD_DIR/signed" -type f -iname "*signed.apk" | head -n 1)
-if [ -z "$SIGNED_APK" ] || [ ! -f "$SIGNED_APK" ]; then
-    echo "❌ Napaka: Podpisan APK paket ni bil ustvarjen v $BUILD_DIR/signed"
+# Podpis: zipalign + apksigner, geslo samo prek okolja, nov kljuc samo s SAFEER_NOV_KLJUC=1 (tools/podpis-apk.sh,
+# tedenski pregled 4. 11. 2026).
+export RELEASE_KEY_PASS
+# shellcheck source=tools/podpis-apk.sh
+source "$DIR/tools/podpis-apk.sh"
+mkdir -p "$BUILD_DIR/signed"
+SIGNED_APK="$BUILD_DIR/signed/safeer-mobile-signed.apk"
+if ! podpisi_apk "$BUILD_DIR/unaligned.apk" "$SIGNED_APK" "$RELEASE_KEYSTORE" "$RELEASE_KEY_ALIAS"; then
+    echo "❌ Napaka: APK ni bil podpisan."
     exit 1
 fi
 

@@ -65,17 +65,94 @@ object ThreatFeedsUpdater {
     var filterRuleCount: Int = 0
         private set
 
-    /** Zažene agenta (enkrat na proces). Vrne takoj; vse delo poteka v ozadju. */
+    /** Drevo grozenj v datoteki (mmap): seme in seznami grozenj, zgrajeno ob spremembi seznamov. */
+    private fun kazaloDatoteka(context: Context) = File(File(context.applicationContext.filesDir, "threat-index"), "drevo-grozenj.bin")
+
+    /**
+     * Seme in BankGuard se spremenita samo z novo namestitvijo aplikacije; ta je del kljuca kazala. Razvojne gradnje imajo
+     * lahko isto versionCode, zato steje tudi cas namestitve (lastUpdateTime).
+     */
+    private fun razlicica(context: Context): String = try {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        "${context.packageName}:${info.longVersionCode}:${info.lastUpdateTime}"
+    } catch (_: Exception) {
+        "" // brez razlicice ni kazala (kljucKazala zahteva samo vsote; prazna razlicica bi bila nevarna ob novi aplikaciji)
+    }
+
+    /**
+     * Zažene agenta (enkrat na proces). Vrne v nekaj ms; vse delo z vsebino seznamov poteka v ozadju.
+     *
+     * Prenos s TV (4. 11. 2026): drevo grozenj se odpre SINHRONO iz kazala (mmap), ce je zgrajeno iz istih seznamov (kljuc
+     * iz SHA-256 v metapodatkih agenta). Takrat agent ob zagonu prebere in prevede samo EasyList; ostali seznami ostanejo na
+     * disku. Brez kazala (prvi zagon, nova namestitev, nov seznam) se vse zgradi v ozadju kot prej in kazalo se zapise.
+     * Do konca prvega nalaganja zahteve v shouldInterceptRequest omejeno pocakajo (ZascitaZagona).
+     */
     @Synchronized
     fun start(context: Context) {
         if (agent != null) return
-        val listAgent = ThreatListAgent(File(context.applicationContext.filesDir, "threat-lists"), SOURCES) { lists ->
-            ruleCount = ThreatBlockEngine.rebuildFromLists(lists.filter { !it.source.raw })
+        ZascitaZagona.zacni()
+        val app = context.applicationContext
+        val kazalo = kazaloDatoteka(app)
+        val razlicica = razlicica(app)
+        val listAgent = ThreatListAgent(File(app.filesDir, "threat-lists"), SOURCES,
+            firstLoadPriority = Thread.NORM_PRIORITY,
+            onFirstLoad = {
+                // Tudi ce seznamov ni ali je kaj padlo: zahteve ne cakajo do roka.
+                koncaj(ZascitaZagona.Del.DREVO, "seznamov ni ali niso berljivi")
+                koncaj(ZascitaZagona.Del.EASYLIST, "seznamov ni ali niso berljivi")
+            },
+            onPartialLists = { lists ->
+                val t = System.nanoTime()
+                filterRuleCount = AdBlockEngine.installFilterLists(lists.filter { it.source.raw })
+                koncaj(ZascitaZagona.Del.EASYLIST, "$filterRuleCount pravil, prevod ${(System.nanoTime() - t) / 1_000_000} ms")
+                // Kazalo je bilo odprto brez branja vsebine; tu (v ozadju) se preverimo CRC celotne datoteke.
+                if (!ThreatBlockEngine.preveriKazalo()) {
+                    android.util.Log.w("SafeerSecurity", "Kazalo grozenj poskodovano: gradim znova iz seznamov")
+                    try { kazalo.delete() } catch (_: Exception) { }
+                    agent?.reloadSaved()
+                }
+            },
+        ) { lists ->
+            val t = System.nanoTime()
+            val grozenj = lists.filter { !it.source.raw }
+            ruleCount = ThreatBlockEngine.rebuildFromLists(grozenj, if (razlicica.isEmpty()) null else kazalo, razlicica)
+            koncaj(ZascitaZagona.Del.DREVO, "zgrajeno iz ${grozenj.size} seznamov, ${ThreatBlockEngine.steviloDomen} domen, " +
+                "${(System.nanoTime() - t) / 1_000_000} ms")
+            val te = System.nanoTime()
             filterRuleCount = AdBlockEngine.installFilterLists(lists.filter { it.source.raw })
+            koncaj(ZascitaZagona.Del.EASYLIST, "$filterRuleCount pravil, prevod ${(System.nanoTime() - te) / 1_000_000} ms")
             android.util.Log.i("SafeerSecurity", "Seznami v uporabi: ${lists.joinToString { "${it.source.name} (${it.entries.size})" }}; pravila EasyList: $filterRuleCount; pravila za skrivanje: ${AdBlockEngine.cosmeticRuleCount}")
         }
         agent = listAgent
-        listAgent.start()
+
+        // Sinhrono: metapodatki (nekaj majhnih datotek) in glava kazala.
+        val t = System.nanoTime()
+        val shranjeni = try { listAgent.savedInfo() } catch (_: Exception) { emptyList() }
+        val grozenj = shranjeni.filter { !it.source.raw }
+        val kljuc = if (razlicica.isEmpty()) null else ThreatBlockEngine.kljucKazala(grozenj.map { it.source.id to it.sha256 }, razlicica)
+        val odprto = ThreatBlockEngine.odpriKazalo(kazalo, kljuc)
+        val ms = (System.nanoTime() - t) / 100_000 / 10.0
+        if (odprto) {
+            ruleCount = grozenj.sumOf { it.count }
+            koncaj(ZascitaZagona.Del.DREVO, "kazalo mmap, ${ThreatBlockEngine.steviloDomen} domen, odprtje $ms ms")
+        } else {
+            android.util.Log.i("SafeerSecurity", "Kazalo grozenj ni v uporabi (${if (kljuc == null) "ni shranjenih seznamov" else "zgrajeno iz drugih seznamov ali ga ni"}): " +
+                "drevo se gradi v ozadju (preverba $ms ms)")
+        }
+        // Ce je kazalo zgrajeno iz istih seznamov, ob zagonu beremo samo EasyList (raw).
+        listAgent.start(if (odprto) SOURCES.filter { it.raw }.map { it.id }.toSet() else null)
+    }
+
+    /** Del zascite je pripravljen: dnevnik s casom tega dela (in skupnim, ko je pripravljeno vse). */
+    private fun koncaj(del: ZascitaZagona.Del, opis: String) {
+        val cas = ZascitaZagona.koncan(del) ?: return
+        val ime = when (del) {
+            ZascitaZagona.Del.DREVO -> "drevo grozenj pripravljeno"
+            ZascitaZagona.Del.PODPISANI -> "podpisani vir pripravljen"
+            ZascitaZagona.Del.EASYLIST -> "EasyList pripravljen"
+        }
+        android.util.Log.i("SafeerSecurity", "Zascita ob zagonu: $ime po $cas ms ($opis)" +
+            if (ZascitaZagona.pripravljeno) "; vse pripravljeno po ${ZascitaZagona.pripravljenoPoMs} ms" else "")
     }
 
     data class UpdateResult(val totalRules: Int, val failedSources: Int, val error: String) {
@@ -108,7 +185,7 @@ object ThreatFeedsUpdater {
                 now - success > 24 * 3600 -> "Seznam ni bil uspešno preverjen več kot 24 ur"
                 else -> "Preverjeno"
             }
-            val count = lists.find { it.source.id == source.id }?.entries?.size ?: 0
+            val count = lists.find { it.source.id == source.id }?.count ?: 0
             "${source.name}: $count pravil\nZadnje uspešno preverjanje: $last\n$state"
         }
         val running = if (agent?.isRefreshing == true) "\nPreverjanje poteka …" else ""

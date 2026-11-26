@@ -8,12 +8,15 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$TEST_DIR")"
 SRC="$PROJECT_DIR/src/main/kotlin/com/safeer/mobile/browser/cast"
-TOOLS_DIR="${SAFEER_TOOLS_DIR:-$HOME/Namizje/Neimenovana mapa/streamN-TV2/android_tv/.tools}"
+TOOLS_DIR="${SAFEER_TOOLS_DIR:-$PROJECT_DIR/../streamN-TV2/android_tv/.tools}"
 KOTLINC="${KOTLINC:-$TOOLS_DIR/kotlinc/bin/kotlinc}"
 command -v "$KOTLINC" >/dev/null 2>&1 || KOTLINC="kotlinc"
+# Preizkusi tecejo tudi v CI (tests/run_tests.sh, tedenski pregled 4. 11. 2026).
 
 # HubTokovi uporablja org.json (na Androidu vgrajen); na JVM ga dodamo iz predpomnilnika Gradla.
-JSON_JAR="${JSON_JAR:-$(ls "$HOME"/.gradle/caches/modules-2/files-2.1/org.json/json/*/*/json-*.jar 2>/dev/null | grep -v sources | head -1)}"
+# Najprej jar v tests/lib/ (vsota v tests/lib/SHA256SUMS; v APK ne gre), sicer predpomnilnik Gradla.
+JSON_JAR="${JSON_JAR:-$PROJECT_DIR/tests/lib/json-20240303.jar}"
+[ -f "$JSON_JAR" ] || JSON_JAR="$(ls "$HOME"/.gradle/caches/modules-2/files-2.1/org.json/json/*/*/json-*.jar 2>/dev/null | grep -v sources | head -1 || true)"
 [ -n "$JSON_JAR" ] || { echo "Manjka org.json (JSON_JAR)" >&2; exit 2; }
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
@@ -69,3 +72,12 @@ java -cp "$OUT/tokovi.jar:$JSON_JAR" com.safeer.mobile.browser.cast.TokoviTestKt
 # Testni vektor RFC 9382 (isti kot za spake2.py v brskalniku za Linux).
 "$KOTLINC" -J-Xmx2g "$SRC/Spake2.kt" "$TEST_DIR/Spake2Test.kt" -include-runtime -d "$OUT/spake2.jar"
 java -cp "$OUT/spake2.jar" com.safeer.mobile.browser.cast.Spake2TestKt
+
+# Dostop naprav do vsebin telefona (DostopPravila, ista pravila kot TV; tedenski pregled 4. 11. 2026).
+"$KOTLINC" -J-Xmx2g "$SRC/DostopPravila.kt" "$TEST_DIR/DostopPravilaTest.kt" -include-runtime -d "$OUT/dostop.jar"
+java -cp "$OUT/dostop.jar" com.safeer.mobile.browser.cast.DostopPravilaTestKt
+python3 "$TEST_DIR/preveri_dostop.py"
+
+# Pripeti odtis Huba velja za https://hub/ in https://hub:443/, ne za drug gostitelj ali vrata (pregled 4. 11. 2026).
+"$KOTLINC" -J-Xmx2g "$SRC/HubNaslov.kt" "$TEST_DIR/HubNaslovTest.kt" -include-runtime -d "$OUT/hub-naslov.jar"
+java -cp "$OUT/hub-naslov.jar" com.safeer.mobile.browser.cast.HubNaslovTestKt

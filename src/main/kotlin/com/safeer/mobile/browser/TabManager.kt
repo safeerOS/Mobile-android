@@ -44,19 +44,67 @@ class TabManager(
     private var restoring = false
     private var disposed = false
     private val saveTask = Runnable { saveSession() }
-    private val sleepTask = object : Runnable {
-        override fun run() {
-            if (disposed) return
-            suspendInactiveTabs()
-            handler.postDelayed(this, 60_000L)
-        }
+    /** Kdaj (elapsedRealtime) je aplikacija sla z zaslona; null = na zaslonu. */
+    private var odsotnaOd: Long? = null
+    /** Kdaj (elapsedRealtime) je nacrtovan naslednji pregled spanja; 0 = ni nacrtovan. */
+    private var pregledOb = 0L
+    private val sleepTask = Runnable {
+        pregledOb = 0L
+        if (!disposed) suspendInactiveTabs()
     }
 
     /** Configure callbacks before the first navigation, including restored/background tabs. */
     var onViewCreated: ((TabModel) -> Unit)? = null
     var onAudioStateChanged: ((tab: TabModel, playing: Boolean) -> Unit)? = null
 
-    init { handler.postDelayed(sleepTask, 60_000L) }
+    init { naPregled(SpanjePravila.ZAVIHEK_V_OZADJU_MS) }
+
+    /**
+     * Pregled spanja ob prvem roku. Pregled ne tece na slepo vsako minuto: prej je zavihek v ozadju
+     * zato zaspal sele 60-120 s po roku. Kasnejsi rok nikoli ne prestavi ze nacrtovanega prejsnjega.
+     */
+    private fun naPregled(zamikMs: Long) {
+        if (disposed) return
+        val zamik = zamikMs.coerceAtLeast(500L)
+        val ob = SystemClock.elapsedRealtime() + zamik
+        if (pregledOb != 0L && pregledOb <= ob) return
+        handler.removeCallbacks(sleepTask)
+        pregledOb = ob
+        handler.postDelayed(sleepTask, zamik)
+    }
+
+    /** Aplikacija ni vec na zaslonu (onStop): cez 3 min (2FA v drugi aplikaciji) zaspi tudi aktivni, ce ne predvaja in nima vnosa. */
+    fun naOdhod() {
+        odsotnaOd = SystemClock.elapsedRealtime()
+        naPregled(SpanjePravila.APLIKACIJA_V_OZADJU_MS)
+    }
+
+    /** Aplikacija je spet na zaslonu (onStart): zaspan aktivni zavihek zbudimo, naslov in Nazaj ostaneta. */
+    fun naPrihod() {
+        odsotnaOd = null
+        val aktivni = getActiveTab() ?: return
+        // Po sesutju ostane gumb za ponovni poskus: o nalaganju odloci uporabnik.
+        if (aktivni.loadedWebView == null && !aktivni.crashed && !disposed) switchTab(aktivni.id)
+        naPregled(SpanjePravila.ZAVIHEK_V_OZADJU_MS)
+    }
+
+    /** Kar zavihek drzi budnega (zvok, video, nedokoncan vnos, prijava, nalaganje). */
+    private fun izjema(tab: TabModel, view: ChromiumEngineView): Boolean = SpanjePravila.izjema(
+        predvaja = tab.isPlayingAudio || view.isPlayingAudio,
+        celozaslonskiVideo = view.isFullscreenVideoActive(),
+        // Odprt izbirnik datotek steje kot obrazec: uporabnik je sredi nalaganja.
+        obrazec = view.hasEditedForm || view.cakaIzbiroDatotek,
+        // Pojavno okno prijave in zavihek, ki ga je odprl, sta povezana (window.opener, postMessage): ce eden
+        // zaspi, se prijava OAuth ne konca. Z rokom 60 s bi se to zgodilo ze med vpisom kode 2FA.
+        prijava = AuthenticationPages.isAuthenticationPage(tab.url) || tab.jePojavni ||
+            tabs.any { it.odpiralec == tab.id && it.loadedWebView != null },
+        nalaga = view.progress < 100
+    )
+
+    private fun zdajZaspi(tab: TabModel, view: ChromiumEngineView, pritisk: Boolean): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        return SpanjePravila.zaspi(tab.id == activeTabId, now - tab.lastUsed, odsotnaOd?.let { now - it }, pritisk, izjema(tab, view))
+    }
 
     fun getPlayingTab(): TabModel? {
         fun playing(tab: TabModel) = tab.isPlayingAudio || tab.loadedWebView?.isPlayingAudio == true
@@ -174,6 +222,7 @@ class TabManager(
         attach(view)
         view.onResume()
         notifyUpdated()
+        naPregled(SpanjePravila.ZAVIHEK_V_OZADJU_MS)
     }
 
     /** Save only URLs/titles; background pages remain unloaded until selected. */
@@ -203,20 +252,29 @@ class TabManager(
         prefs.edit().putString("session", TabSessionCodec.encode(data)).apply()
     }
 
-    /** Keep music, fullscreen video and edited forms alive. Back/forward history stays in memory. */
+    /**
+     * Uspava zavihke po SpanjePravila: v ozadju po 60 s, aktivni 3 min po odhodu aplikacije z zaslona. Glasba, video,
+     * nedokoncan obrazec, prijava in nalaganje ostanejo budni; saveState ohrani zgodovino Nazaj in polozaj.
+     */
     fun suspendInactiveTabs(memoryPressure: Boolean = false) {
         val now = SystemClock.elapsedRealtime()
-        tabs.filter { it.id != activeTabId }.forEach { tab ->
+        val odOdhoda = odsotnaOd?.let { now - it }
+        tabs.toList().forEach { tab ->
             val view = tab.loadedWebView ?: return@forEach
-            if (tab.isPlayingAudio || view.isPlayingAudio || view.isFullscreenVideoActive() || view.hasEditedForm) return@forEach
-            if (!memoryPressure && now - tab.lastUsed < 10 * 60_000L) return@forEach
-            if (view.progress < 100 || AuthenticationPages.isAuthenticationPage(tab.url)) return@forEach
+            val aktiven = tab.id == activeTabId
+            if (!zdajZaspi(tab, view, memoryPressure)) {
+                val preostanek = SpanjePravila.preostanek(aktiven, now - tab.lastUsed, odOdhoda) ?: return@forEach
+                // Rok je mimo, a izjema (zvok, vnos ...) ga drzi budnega: pogledamo znova pozneje.
+                naPregled(if (preostanek > 0L) preostanek else SpanjePravila.PONOVNI_PREGLED_MS)
+                return@forEach
+            }
             val candidateUrl = tab.url
             view.canSuspendSafely { safe ->
-                // The JS answer arrives later: the user may have selected, navigated or closed this tab.
-                if (!safe || disposed || tab !in tabs || tab.id == activeTabId || tab.loadedWebView !== view ||
-                    tab.url != candidateUrl || tab.isPlayingAudio || view.isPlayingAudio || view.hasEditedForm ||
-                    view.isFullscreenVideoActive() || view.progress < 100) return@canSuspendSafely
+                // Odgovor JS pride pozneje: uporabnik je morda medtem izbral, premaknil ali zaprl zavihek
+                // ali se vrnil v aplikacijo - pravilo zato preverimo znova s svezimi podatki.
+                if (disposed || tab !in tabs || tab.loadedWebView !== view || tab.url != candidateUrl) return@canSuspendSafely
+                if (!safe) { naPregled(SpanjePravila.PONOVNI_PREGLED_MS); return@canSuspendSafely }
+                if (!zdajZaspi(tab, view, memoryPressure)) return@canSuspendSafely
                 val state = Bundle()
                 if (try { view.saveState(state) == null } catch (_: Exception) { true }) return@canSuspendSafely
                 tab.savedState = state

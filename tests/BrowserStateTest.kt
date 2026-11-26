@@ -40,6 +40,39 @@ fun main() {
     check(first.loadedWebView == null && firstView.destroyed)
     manager.switchTab(first.id)
     check(first.webView !== firstView && first.webView.url == first.url)
+    // Lastnik 4. 11. 2026: zavihek v ozadju zaspi po 60 s, aktivni 3 min po odhodu aplikacije (2FA).
+    manager.switchTab(second.id)
+    val firstLive = first.loadedWebView!!
+    SystemClock.time += 59_000
+    manager.suspendInactiveTabs()
+    check(first.loadedWebView === firstLive) { "zavihek v ozadju zaspal pred 60 s" }
+    SystemClock.time += 1_000
+    manager.suspendInactiveTabs()
+    check(first.loadedWebView == null && firstLive.destroyed) { "zavihek v ozadju ni zaspal po 60 s" }
+    val secondView = second.loadedWebView!!
+    manager.naOdhod()
+    SystemClock.time += 179_000
+    manager.suspendInactiveTabs()
+    check(second.loadedWebView === secondView) { "aktivni zaspal pred 180 s (2FA v drugi aplikaciji)" }
+    secondView.isPlayingAudio = true
+    SystemClock.time += 60_000
+    manager.suspendInactiveTabs()
+    check(second.loadedWebView === secondView) { "glasba v ozadju je umrla" }
+    secondView.isPlayingAudio = false
+    secondView.hasEditedForm = true
+    manager.suspendInactiveTabs()
+    check(second.loadedWebView === secondView) { "nedokoncan obrazec v ozadju je umrl" }
+    secondView.hasEditedForm = false
+    secondView.cakaIzbiroDatotek = true
+    manager.suspendInactiveTabs()
+    check(second.loadedWebView === secondView) { "odprt izbirnik datotek: zavihek je zaspal" }
+    secondView.cakaIzbiroDatotek = false
+    manager.suspendInactiveTabs()
+    check(second.loadedWebView == null && secondView.destroyed && container.children.isEmpty()) { "aktivni ni zaspal 180 s po odhodu" }
+    manager.naPrihod()
+    check(second.loadedWebView != null && second.loadedWebView !== secondView && second.webView.url == second.url &&
+        container.children.single() === second.webView) { "aktivni se ob vrnitvi ni zbudil s svojim naslovom" }
+    check(first.loadedWebView == null) { "ob vrnitvi se je zbudil tudi zavihek v ozadju" }
     manager.switchTab(second.id)
     manager.saveSession()
     manager.dispose()
@@ -66,7 +99,7 @@ fun main() {
     val cleared = TabManager(FrameLayout(context)) { _, _ -> }
     check(cleared.restoreSession() && cleared.count == 1 && cleared.getActiveTab()?.url == TabSessionCodec.HOME)
     cleared.dispose()
-    check(configured == 3)
+    check(configured == 4)
     val threads = (1..8).map { Thread { repeat(2000) {
         PreferencesManager.incrementAdsBlocked(context)
         PreferencesManager.incrementThreatsBlocked(context)

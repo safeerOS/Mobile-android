@@ -381,7 +381,9 @@ class CastSenderClient(
                     val razlicica = payload.optLong("version", 0L)
                     val zig = payload.optDouble("timestamp", 0.0)
                     val vsebina = payload.optJSONObject("data") ?: JSONObject()
-                    if (kategorija.isNotEmpty()) {
+                    // Usklajevanje (zaznamki) samo od naprave v ozjem krogu tega telefona (Dostop, kot TV; pregled 4. 11. 2026).
+                    val smeSync = context?.let { Dostop.smeSporocilo(it, json.optString("sender", ""), "sync.data") } ?: false
+                    if (kategorija.isNotEmpty() && smeSync) {
                         mainHandler.post { onSyncData?.invoke(kategorija, razlicica, zig, vsebina) }
                     }
                 }

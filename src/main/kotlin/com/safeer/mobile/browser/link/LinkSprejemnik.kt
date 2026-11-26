@@ -246,10 +246,14 @@ class LinkSprejemnik : Service() {
             val od = LinkVzdevki.ime(this, sporocilo.optString("sender", ""),
                 sporocilo.optString("sender_name", "").ifBlank { sporocilo.optString("sender", "naprava") })
             val tovor = sporocilo.optJSONObject("payload") ?: JSONObject()
+            // Stran ali zaslon, ki se odpre sam, samo napravi z dostopom (DostopPravila.zahtevaSporocila); besedilo in
+            // datoteka sta izrecno poslana in prosta.
+            if (!com.safeer.mobile.browser.cast.Dostop.smeSporocilo(this, sporocilo.optString("sender", ""), tip, tovor.optString("action", ""))) return
             when (tip) {
                 "cast.url" -> {
                     val url = tovor.optString("url", "").trim()
-                    if (url.startsWith("http://") || url.startsWith("https://")) odpriStran(od, url, tovor.optString("title", ""))
+                    if (com.safeer.mobile.browser.SpletVarnostPravila.vhodniNaslov(url, com.safeer.mobile.browser.SpletVarnostPravila.Vhod.SPLET))
+                        odpriStran(od, url, tovor.optString("title", ""))
                 }
                 "share.text" -> {
                     val besedilo = tovor.optString("text", "")
@@ -261,7 +265,9 @@ class LinkSprejemnik : Service() {
                     if (tovor.optString("action", "") == "start") {
                         val pot = tovor.optString("path", "")
                         val url = if (pot.startsWith("/")) hubHttp() + pot else tovor.optString("url", "")
-                        if (url.isNotBlank()) odpriStran(od, url, I18n.t(this, "share_screen_of").replace("{ime}", od))
+                        // Naslov je izbrala druga naprava: samo http(s) (UXSS, 4. 11. 2026 kot TV share.screen).
+                        if (com.safeer.mobile.browser.SpletVarnostPravila.vhodniNaslov(url, com.safeer.mobile.browser.SpletVarnostPravila.Vhod.SPLET))
+                            odpriStran(od, url, I18n.t(this, "share_screen_of").replace("{ime}", od))
                     }
                 }
                 "share.file" -> {
@@ -294,6 +300,11 @@ class LinkSprejemnik : Service() {
         // Posiljatelj iz sporocila huba, ne iz parametrov (zeton za datoteke je na napravo).
         try { parametri.put("_posiljatelj", posiljatelj) } catch (_: Throwable) { }
         val refId = sporocilo.optString("id", "")
+        // Tedenski pregled 4. 11. 2026: o vsebinah telefona odloca samo telefon (Dostop, kot na TV in racunalniku).
+        if (!com.safeer.mobile.browser.cast.Dostop.smeDejanje(this, posiljatelj, dejanje)) {
+            if (posiljatelj.isNotBlank()) odjemalec.posljiSporocilo(Daljinec.sporociloIzida(posiljatelj, refId, dejanje, Daljinec.NI_DOVOLJENO))
+            return
+        }
         glavnaNit.post {
             val ospredje = naUkaz
             val izid = Daljinec.izvedi(this, dejanje, parametri, ospredje, DOMACA_STRAN) { url, naslov ->
@@ -312,8 +323,14 @@ class LinkSprejemnik : Service() {
             glavnaNit.post { v(url) }
             return
         }
-        val namera = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setClass(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Domaca stran ni dovoljena kot data od zunaj (NAMERA): gre z notranjim dodatkom na izrecni komponenti.
+        val namera = when (com.safeer.mobile.browser.SpletVarnostPravila.obvestiloStrani(url)) {
+            com.safeer.mobile.browser.SpletVarnostPravila.ObvestiloStrani.DOMACA -> Intent(this, MainActivity::class.java)
+                .setAction(Intent.ACTION_MAIN).putExtra(MainActivity.EXTRA_ODPRI_DOMACO, true)
+            com.safeer.mobile.browser.SpletVarnostPravila.ObvestiloStrani.NASLOV ->
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).setClass(this, MainActivity::class.java)
+            com.safeer.mobile.browser.SpletVarnostPravila.ObvestiloStrani.ZAVRNI -> return
+        }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val klik = PendingIntent.getActivity(this, stevecObvestil, namera, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         objaviObvestilo(
             I18n.t(this, "share_received_page").replace("{ime}", od),

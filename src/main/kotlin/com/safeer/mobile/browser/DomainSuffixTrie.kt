@@ -117,4 +117,84 @@ class DomainSuffixTrie {
         root.children.clear()
         size = 0
     }
+
+    /**
+     * Zapise vse vpise v datoteko za [DomenskoKazalo] (4. 11. 2026, prenos s TV: drevo grozenj ob zagonu iz mmap namesto
+     * gradnje v kopici). Vsak oznaceni vozel je ena domena; ujemanje ostane isto (najkrajsa shranjena pripona obvelja,
+     * kategorija in vir prvega vpisa). [kljuc] pove, iz cesa je drevo zgrajeno.
+     */
+    fun zapisiKazalo(datoteka: java.io.File, kljuc: ByteArray) {
+        val domene = ArrayList<String>(size)
+        val vrednosti = ArrayList<Int>(size)
+        val besede = ArrayList<String?>()
+        val indeksi = HashMap<String?, Int>()
+        fun beseda(b: String?): Int = indeksi.getOrPut(b) { besede.add(b); besede.size - 1 }
+        // Obhod v globino s skladom (brez rekurzije: globina je stevilo delov domene, a sklad je cenejsi od klicev).
+        val sklad = ArrayDeque<Pair<Node, String>>()
+        sklad.addLast(root to "")
+        while (sklad.isNotEmpty()) {
+            val (vozel, pripona) = sklad.removeLast()
+            if (vozel !== root && vozel.isTerminal) {
+                val k = beseda(vozel.category)
+                val v = beseda(vozel.sourceFeed)
+                require(k < 0x8000 && v < 0x10000) { "prevec razlicnih kategorij ali virov" }
+                domene.add(pripona)
+                vrednosti.add((k shl 16) or v)
+            }
+            for ((del, otrok) in vozel.children) sklad.addLast(otrok to if (pripona.isEmpty()) del else "$del.$pripona")
+        }
+        val red = domene.indices.sortedWith { a, b -> domene[a].compareTo(domene[b]) }
+        val tabela = com.safeer.threatfeed.SortedStringTable.Table(
+            red.size,
+            { i -> domene[red[i]] },
+            { i -> vrednosti[red[i]] },
+        )
+        com.safeer.threatfeed.SortedStringTable.write(datoteka, kljuc, besede, listOf(tabela))
+    }
+}
+
+/**
+ * Isti seznam kot [DomainSuffixTrie], odprt iz datoteke (FileChannel.map, prenos s TV 4. 11. 2026): ni v kopici in ga ni
+ * treba graditi ob zagonu. Iskanje je natanko isto - najkrajsa shranjena pripona gostitelja obvelja.
+ */
+class DomenskoKazalo private constructor(private val tabela: com.safeer.threatfeed.SortedStringTable) {
+    val size: Int get() = tabela.size(0)
+    val bajtov: Long get() = tabela.bytes
+
+    fun matches(host: String): Boolean = findMatch(host) != null
+
+    fun findMatch(host: String): DomainSuffixTrie.MatchResult? {
+        // Ista normalizacija kot DomainSuffixTrie.findMatch: male crke, brez praznih delov.
+        val clean = host.trim().lowercase()
+        if (clean.isEmpty() || tabela.size(0) == 0) return null
+        // Navaden gostitelj (brez praznih delov) brez razbijanja na dele; sicer kot drevo: prazni deli odpadejo.
+        val g = if (clean[0] != '.' && clean[clean.length - 1] != '.' && !clean.contains("..")) clean
+            else clean.split('.').filter { it.isNotEmpty() }.joinToString(".").ifEmpty { return null }
+        var odmik = g.length
+        while (true) {
+            odmik = g.lastIndexOf('.', odmik - 1)
+            val zacetekPripone = if (odmik < 0) 0 else odmik + 1
+            val v = tabela.find(0, g, zacetekPripone)
+            if (v >= 0) {
+                return DomainSuffixTrie.MatchResult(
+                    isMatched = true,
+                    matchedDomain = g.substring(zacetekPripone),
+                    category = tabela.words.getOrNull(v ushr 16),
+                    sourceFeed = tabela.words.getOrNull(v and 0xffff)
+                )
+            }
+            if (odmik <= 0) return null
+        }
+    }
+
+    /** Celotna datoteka je neposkodovana (CRC32); klici v ozadju, ne na glavni niti. */
+    fun neposkodovano(): Boolean = tabela.bodyIntact()
+
+    companion object {
+        /** Odpre kazalo, ce je datoteka cela in zgrajena iz [kljuc]; sicer null. Bere samo glavo (ms). */
+        fun odpri(datoteka: java.io.File, kljuc: ByteArray): DomenskoKazalo? {
+            val t = com.safeer.threatfeed.SortedStringTable.open(datoteka, kljuc) ?: return null
+            return if (t.tableCount == 1) DomenskoKazalo(t) else null
+        }
+    }
 }
